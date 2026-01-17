@@ -3,8 +3,11 @@ package com.example.recorder
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.content.Intent
 import android.media.MediaRecorder
 import android.os.Build
+import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import java.io.File
@@ -19,7 +22,6 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         private var instance: CallRecorderAccessibilityService? = null
 
         fun getInstance(): CallRecorderAccessibilityService? = instance
-
         fun isServiceEnabled(): Boolean = instance != null
     }
 
@@ -27,20 +29,192 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     private var isRecording = false
     private var currentFilePath: String? = null
 
+    // NEW: Track call state independently
+    private var isInCall = false
+    private var telephonyManager: TelephonyManager? = null
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        Log.d(TAG, "Accessibility Service Connected - Ready for Call Recording")
+
+        // Initialize telephony manager for call state monitoring
+        telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+        Log.d(TAG, "✅ Accessibility Service Connected - Background Recording ENABLED")
+        Log.d(TAG, "📱 App can be closed - Recording will continue automatically")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Monitor window state changes for call detection
         event?.let {
             when (it.eventType) {
+                // Monitor window state changes to detect call UI
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                    Log.d(TAG, "Window State Changed: ${it.packageName}")
+                    val packageName = it.packageName?.toString() ?: ""
+
+                    // Detect call-related packages (phone dialers, telecom)
+                    if (isCallRelatedPackage(packageName)) {
+                        Log.d(TAG, "📞 Call UI Detected: $packageName")
+
+                        // Check actual call state
+                        checkAndHandleCallState()
+                    }
+                }
+
+                // Monitor notification state for call notifications
+                AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED -> {
+                    val notification = it.text?.toString() ?: ""
+                    if (notification.contains("call", ignoreCase = true)) {
+                        Log.d(TAG, "🔔 Call Notification: $notification")
+                        checkAndHandleCallState()
+                    }
                 }
             }
+        }
+    }
+
+    // NEW: Check actual phone call state using TelephonyManager
+    private fun checkAndHandleCallState() {
+        try {
+            val callState = telephonyManager?.callState ?: TelephonyManager.CALL_STATE_IDLE
+
+            when (callState) {
+                TelephonyManager.CALL_STATE_OFFHOOK -> {
+                    // Call is active (answered)
+                    if (!isInCall && !isRecording) {
+                        Log.d(TAG, "📞 CALL STARTED (OFFHOOK)")
+                        isInCall = true
+                        startCallRecording()
+                    }
+                }
+
+                TelephonyManager.CALL_STATE_RINGING -> {
+                    // Incoming call ringing (not yet answered)
+                    if (!isInCall) {
+                        Log.d(TAG, "📞 CALL RINGING (waiting for answer)")
+                        isInCall = true
+                        // Don't start recording yet - wait for OFFHOOK
+                    }
+                }
+
+                TelephonyManager.CALL_STATE_IDLE -> {
+                    // No call or call ended
+                    if (isInCall) {
+                        Log.d(TAG, "📞 CALL ENDED (IDLE)")
+                        isInCall = false
+                        if (isRecording) {
+                            stopCallRecording()
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error checking call state", e)
+        }
+    }
+
+    // NEW: Detect call-related packages
+    private fun isCallRelatedPackage(packageName: String): Boolean {
+        val callPackages = listOf(
+            "com.android.server.telecom",
+            "com.android.incallui",
+            "com.google.android.dialer",
+            "com.samsung.android.incallui",
+            "com.android.phone",
+            "com.samsung.android.dialer",
+            "com.android.contacts",
+            "com.google.android.contacts"
+        )
+        return callPackages.any { packageName.contains(it, ignoreCase = true) }
+    }
+
+    // NEW: Automatic call recording start
+    private fun startCallRecording() {
+        if (isRecording) {
+            Log.w(TAG, "⚠️ Already recording, skipping")
+            return
+        }
+
+        try {
+            // Start foreground service
+            CallRecordingForegroundService.start(this)
+
+            // Generate file path
+            val filePath = generateRecordingFilePath()
+            currentFilePath = filePath
+
+            // Start recording
+            val success = startRecording(filePath)
+
+            if (success) {
+                Log.d(TAG, "✅ AUTO Recording started: $filePath")
+            } else {
+                Log.e(TAG, "❌ Failed to start AUTO recording")
+                currentFilePath = null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in startCallRecording", e)
+        }
+    }
+
+    // NEW: Automatic call recording stop
+    private fun stopCallRecording() {
+        if (!isRecording) {
+            Log.w(TAG, "⚠️ Not recording, skipping")
+            return
+        }
+
+        try {
+            val savedPath = stopRecording()
+
+            if (savedPath != null) {
+                Log.d(TAG, "✅ AUTO Recording saved: $savedPath")
+
+                // Verify file
+                val file = File(savedPath)
+                if (file.exists()) {
+                    val sizeMB = file.length() / (1024.0 * 1024.0)
+                    Log.d(TAG, "📁 File size: ${String.format("%.2f", sizeMB)} MB")
+
+                    // Notify Flutter app if running
+                    notifyFlutterApp(savedPath)
+                }
+            }
+
+            // Stop foreground service
+            CallRecordingForegroundService.stop(this)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in stopCallRecording", e)
+        }
+    }
+
+    // NEW: Generate recording file path
+    private fun generateRecordingFilePath(): String {
+        val recordingsDir = File(filesDir, "CallRecordings")
+
+        // Create directory if not exists
+        if (!recordingsDir.exists()) {
+            recordingsDir.mkdirs()
+        }
+
+        // Generate filename with timestamp
+        val timestamp = System.currentTimeMillis()
+        val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+        val dateStr = dateFormat.format(Date(timestamp))
+        val fileName = "call_${dateStr}_$timestamp.m4a"
+
+        return File(recordingsDir, fileName).absolutePath
+    }
+
+    // NEW: Notify Flutter app (if running) about new recording
+    private fun notifyFlutterApp(filePath: String) {
+        try {
+            val intent = Intent("com.example.recorder.NEW_RECORDING")
+            intent.putExtra("filePath", filePath)
+            sendBroadcast(intent)
+            Log.d(TAG, "📤 Notified Flutter app about new recording")
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Could not notify Flutter (app may be closed): ${e.message}")
         }
     }
 
@@ -52,9 +226,10 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         super.onDestroy()
         instance = null
         stopRecording()
+        Log.d(TAG, "❌ Service Destroyed")
     }
 
-    // CRITICAL FUNCTION: Start Recording with Android 15/16 Compatible AudioSource
+    // EXISTING: Start Recording Function (No changes)
     fun startRecording(filePath: String): Boolean {
         if (isRecording) {
             Log.w(TAG, "Recording already in progress")
@@ -64,31 +239,19 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         return try {
             currentFilePath = filePath
 
-            // Initialize MediaRecorder based on Android version
             mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(this)
             } else {
                 @Suppress("DEPRECATION")
                 MediaRecorder()
             }.apply {
-                // AUDIO SOURCE SELECTION (Critical for 2026)
-                // Based on Android version compatibility
                 setAudioSource(getOptimalAudioSource())
-
-                // Output Format: MPEG4 provides best compatibility
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-
-                // Audio Encoder: AAC provides good quality and compression
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-
-                // Optional: Set Audio Sampling Rate for better quality
                 setAudioSamplingRate(44100)
                 setAudioEncodingBitRate(128000)
-
-                // Set Output File
                 setOutputFile(filePath)
 
-                // Prepare and Start
                 try {
                     prepare()
                     start()
@@ -111,7 +274,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
-    // STOP RECORDING
+    // EXISTING: Stop Recording Function (No changes)
     fun stopRecording(): String? {
         if (!isRecording) {
             return null
@@ -139,30 +302,21 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
-    // OPTIMAL AUDIO SOURCE SELECTION FOR 2026
-    // Based on Android version and device capabilities
+    // EXISTING: Optimal Audio Source (No changes)
     private fun getOptimalAudioSource(): Int {
         return when {
-            // Android 14+ (API 34+): Use VOICE_RECOGNITION
-            // It bypasses most Echo Cancellation but still works reliably
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
                 Log.d(TAG, "Using VOICE_RECOGNITION for Android 14+")
                 MediaRecorder.AudioSource.VOICE_RECOGNITION
             }
-
-            // Android 12-13 (API 31-33): Use VOICE_COMMUNICATION
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
                 Log.d(TAG, "Using VOICE_COMMUNICATION for Android 12-13")
                 MediaRecorder.AudioSource.VOICE_COMMUNICATION
             }
-
-            // Android 10-11 (API 29-30): Use MIC
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
                 Log.d(TAG, "Using MIC for Android 10-11")
                 MediaRecorder.AudioSource.MIC
             }
-
-            // Fallback for older versions
             else -> {
                 Log.d(TAG, "Using DEFAULT for older Android")
                 MediaRecorder.AudioSource.DEFAULT
@@ -171,6 +325,5 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     }
 
     fun isCurrentlyRecording(): Boolean = isRecording
-
     fun getCurrentFilePath(): String? = currentFilePath
 }

@@ -22,6 +22,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isRecording = false;
   List<FileSystemEntity> _recordings = [];
 
+  // S3 Configuration
+  final TextEditingController _s3UrlController = TextEditingController();
+  final TextEditingController _s3TokenController = TextEditingController();
+  bool _isS3Configured = false;
+  bool _isUploading = false;
+
   @override
   void initState() {
     super.initState();
@@ -31,6 +37,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _initializeApp() async {
     await _checkAccessibilityStatus();
     await _loadRecordings();
+    setState(() {
+      _isS3Configured = _recorderService.isS3Configured;
+    });
   }
 
   Future<void> _checkAccessibilityStatus() async {
@@ -74,7 +83,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openAccessibilitySettings() async {
     await NativeRecorderBridge.openAccessibilitySettings();
 
-    // Show dialog with instructions
     if (mounted) {
       showDialog(
         context: context,
@@ -86,7 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 '2. Turn ON the service\n'
                 '3. If you see "Restricted", tap the 3-dot menu (⋮) and select "Allow restricted settings"\n'
                 '4. Come back to the app\n\n'
-                'This is required for call recording to work.',
+                'Recording will start AUTOMATICALLY when you receive or make calls.',
           ),
           actions: [
             TextButton(
@@ -98,6 +106,89 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+      );
+    }
+  }
+
+  // Configure S3
+  Future<void> _showS3ConfigDialog() async {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Configure S3 Upload'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _s3UrlController,
+                decoration: const InputDecoration(
+                  labelText: 'S3 URL',
+                  hintText: 'https://your-bucket.s3.amazonaws.com',
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _s3TokenController,
+                decoration: const InputDecoration(
+                  labelText: 'Auth Token',
+                  hintText: 'Your access token',
+                ),
+                obscureText: true,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final url = _s3UrlController.text.trim();
+              final token = _s3TokenController.text.trim();
+
+              if (url.isNotEmpty && token.isNotEmpty) {
+                _recorderService.configureS3(url: url, token: token);
+                setState(() {
+                  _isS3Configured = true;
+                });
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('S3 configured successfully')),
+                );
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Upload all recordings to S3
+  Future<void> _uploadAllToS3() async {
+    if (!_isS3Configured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please configure S3 first')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isUploading = true;
+    });
+
+    final count = await _recorderService.uploadAllPendingRecordings();
+
+    setState(() {
+      _isUploading = false;
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Uploaded $count recordings to S3')),
       );
     }
   }
@@ -149,6 +240,11 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Company Call Recorder'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.cloud_upload),
+            onPressed: _showS3ConfigDialog,
+            tooltip: 'Configure S3',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadRecordings,
@@ -214,7 +310,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'Recording Service',
+                        'Auto Recording',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const Spacer(),
@@ -229,27 +325,80 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Icon(
+                        _isS3Configured
+                            ? Icons.cloud_done
+                            : Icons.cloud_off,
+                        color: _isS3Configured
+                            ? Colors.blue
+                            : Colors.grey,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'S3 Upload',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const Spacer(),
+                      Text(
+                        _isS3Configured ? 'Configured' : 'Not Set',
+                        style: TextStyle(
+                          color: _isS3Configured
+                              ? Colors.blue
+                              : Colors.grey,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
 
-          // Test Recording Button
+          // Action Buttons
           if (_isAccessibilityEnabled)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _testRecording,
-                  icon: Icon(_isRecording ? Icons.stop : Icons.mic),
-                  label: Text(_isRecording ? 'Stop Test Recording' : 'Start Test Recording'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _isRecording ? Colors.red : Colors.blue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _testRecording,
+                      icon: Icon(_isRecording ? Icons.stop : Icons.mic),
+                      label: Text(_isRecording ? 'Stop Test Recording' : 'Test Recording'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isRecording ? Colors.red : Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.all(16),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  if (_isS3Configured)
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _isUploading ? null : _uploadAllToS3,
+                        icon: _isUploading
+                            ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                            : const Icon(Icons.cloud_upload),
+                        label: Text(_isUploading ? 'Uploading...' : 'Upload All to S3'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.all(16),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
 
@@ -285,7 +434,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Recordings will appear here automatically',
+                    'Calls will be recorded AUTOMATICALLY',
                     style: TextStyle(color: Colors.grey[500], fontSize: 12),
                   ),
                 ],
@@ -312,7 +461,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       '${_formatDateTime(stat.modified)} • ${_formatFileSize(stat.size)}',
                       style: const TextStyle(fontSize: 12),
                     ),
-                    // Add this onTap handler
                     onTap: () {
                       Navigator.push(
                         context,
@@ -358,8 +506,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 );
-
-
               },
             ),
           ),
@@ -370,6 +516,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _s3UrlController.dispose();
+    _s3TokenController.dispose();
     _recorderService.dispose();
     super.dispose();
   }

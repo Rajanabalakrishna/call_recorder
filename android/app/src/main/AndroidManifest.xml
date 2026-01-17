@@ -8,7 +8,6 @@
 
     <!-- Foreground Service Required for Android 15/16 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- CHANGED: Use microphone instead of phoneCall -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -21,6 +20,12 @@
     <!-- Accessibility Service Permission (Bypass mechanism) -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
         tools:ignore="ProtectedPermissions" />
+
+    <!-- NEW: Wake lock to keep service alive -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- NEW: Receive boot completed to auto-start service -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:label="recorder"
@@ -48,11 +53,13 @@
         </activity>
 
         <!-- ACCESSIBILITY SERVICE (Critical for Call Recording) -->
+        <!-- NEW: enabled=true ensures it stays active -->
         <service
             android:name=".CallRecorderAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="false"
-            android:enabled="true">
+            android:enabled="true"
+            android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
@@ -62,12 +69,24 @@
         </service>
 
         <!-- FOREGROUND SERVICE FOR RECORDING -->
-        <!-- CHANGED: foregroundServiceType from phoneCall to microphone -->
         <service
             android:name=".CallRecordingForegroundService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone"
+            android:directBootAware="true" />
+
+        <!-- NEW: Boot receiver to restart service after reboot -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <meta-data
             android:name="flutterEmbedding"
