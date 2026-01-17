@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- File: android/app/src/main/res/xml/accessibility_service_config.xml -->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_service_description"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeNotificationStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRequestFilterKeyEvents"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="100"
+    android:packageNames="com.android.server.telecom,com.google.android.dialer,com.samsung.android.incallui" />
+
+    <!--
+    IMPORTANT: This allows monitoring phone call events through the Accessibility API.
+    The packageNames filter includes system dialer apps to reduce unnecessary event processing.
+    -->
