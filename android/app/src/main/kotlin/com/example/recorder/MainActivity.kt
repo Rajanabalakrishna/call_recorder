@@ -9,6 +9,7 @@ import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity: FlutterActivity() {
 
@@ -21,19 +22,26 @@ class MainActivity: FlutterActivity() {
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                "getRecordingsDirectory" -> {
+                    // Logic to get the recordings directory
+                    val recordingsDir = File(dataDir.absolutePath + "/app_flutter/CallRecordings")
+                    if (!recordingsDir.exists()) {
+                        recordingsDir.mkdirs()
+                    }
+                    result.success(recordingsDir.absolutePath)
+                }
+
                 "openAccessibilitySettings" -> {
                     openAccessibilitySettings()
                     result.success(true)
                 }
 
                 "isAccessibilityServiceEnabled" -> {
-                    // FIXED: Use Settings-based check
                     val enabled = CallRecorderAccessibilityService.isServiceEnabled(this)
                     result.success(enabled)
                 }
 
                 "startForegroundService" -> {
-                    // Start foreground service manually
                     CallRecordingForegroundService.start(this)
                     result.success(true)
                 }
@@ -96,9 +104,6 @@ class MainActivity: FlutterActivity() {
         startActivity(intent)
     }
 
-    /**
-     * CRITICAL: Request battery optimization disable (like Cube ACR)
-     */
     private fun requestBatteryOptimizationDisable() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val intent = Intent().apply {

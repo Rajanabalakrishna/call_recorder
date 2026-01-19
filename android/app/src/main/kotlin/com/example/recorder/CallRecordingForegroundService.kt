@@ -16,6 +16,8 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.text.SimpleDateFormat
+import android.os.PowerManager
+
 import java.util.*
 
 /**
@@ -29,7 +31,7 @@ class CallRecordingForegroundService : Service() {
         private const val CHANNEL_ID = "call_recording_channel"
         private const val NOTIFICATION_ID = 1001
 
-        private var isServiceRunning = false
+         var isServiceRunning = false
 
         fun start(context: Context) {
             if (isServiceRunning) {
@@ -52,6 +54,8 @@ class CallRecordingForegroundService : Service() {
         }
     }
 
+    private var wakeLock: PowerManager.WakeLock? = null
+
     private var mediaRecorder: MediaRecorder? = null
     private var isRecording = false
     private var currentFilePath: String? = null
@@ -70,13 +74,18 @@ class CallRecordingForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "📱 Service started")
 
-        // Start as foreground IMMEDIATELY
-        startForeground(NOTIFICATION_ID, createNotification("Ready to record calls"))
+        // Start as foreground with explicit types for Android 14+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                createNotification("Ready to record calls"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification("Ready to record calls"))
+        }
 
-        // Register phone state listener
         registerPhoneStateListener()
-
-        // CRITICAL: Return START_STICKY to restart if killed
         return START_STICKY
     }
 
@@ -280,21 +289,15 @@ class CallRecordingForegroundService : Service() {
         }.start()
     }
 
+    // Inside CallRecordingForegroundService.kt
     private fun getOptimalAudioSource(): Int {
-        return when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                Log.d(TAG, "Using VOICE_COMMUNICATION")
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION
-            }
-            else -> {
-                Log.d(TAG, "Using MIC")
-                MediaRecorder.AudioSource.MIC
-            }
-        }
+        // MIC is the most reliable for starting in the background
+        return MediaRecorder.AudioSource.MIC
     }
 
     private fun generateRecordingFilePath(): String {
-        val recordingsDir = File(applicationContext.filesDir, "CallRecordings")
+        // CHANGE: Point to the standard Flutter documents directory
+        val recordingsDir = File(applicationContext.dataDir.absolutePath + "/app_flutter/CallRecordings")
         if (!recordingsDir.exists()) {
             recordingsDir.mkdirs()
         }

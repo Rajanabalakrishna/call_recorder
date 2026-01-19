@@ -59,9 +59,13 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
+    // android/app/src/main/kotlin/com/example/recorder/CallRecorderAccessibilityService.kt
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Keep this minimal - we don't need to process events
-        // Just having this service running keeps us alive
+        // This is the "Heartbeat". Every time the user interacts with the phone,
+        // we ensure the recording service is still alive.
+        if (!CallRecordingForegroundService.isServiceRunning) {
+            startAndMaintainForegroundService()
+        }
     }
 
     override fun onInterrupt() {
