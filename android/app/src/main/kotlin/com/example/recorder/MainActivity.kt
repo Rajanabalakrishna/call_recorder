@@ -1,6 +1,10 @@
+// File: android/app/src/main/kotlin/com/example/recorder/MainActivity.kt
 package com.example.recorder
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -17,37 +21,19 @@ class MainActivity: FlutterActivity() {
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
-                "startRecording" -> {
-                    val filePath = call.argument<String>("filePath")
-                    if (filePath != null) {
-                        val success = startRecording(filePath)
-                        result.success(success)
-                    } else {
-                        result.error("INVALID_ARGUMENT", "File path is required", null)
-                    }
-                }
-
-                "stopRecording" -> {
-                    val savedPath = stopRecording()
-                    result.success(savedPath)
-                }
-
-                "isRecording" -> {
-                    val recording = isRecording()
-                    result.success(recording)
-                }
-
                 "openAccessibilitySettings" -> {
                     openAccessibilitySettings()
                     result.success(true)
                 }
 
                 "isAccessibilityServiceEnabled" -> {
-                    val enabled = CallRecorderAccessibilityService.isServiceEnabled()
+                    // FIXED: Use Settings-based check
+                    val enabled = CallRecorderAccessibilityService.isServiceEnabled(this)
                     result.success(enabled)
                 }
 
                 "startForegroundService" -> {
+                    // Start foreground service manually
                     CallRecordingForegroundService.start(this)
                     result.success(true)
                 }
@@ -57,6 +43,46 @@ class MainActivity: FlutterActivity() {
                     result.success(true)
                 }
 
+                "requestBatteryOptimization" -> {
+                    requestBatteryOptimizationDisable()
+                    result.success(true)
+                }
+
+                "isBatteryOptimizationDisabled" -> {
+                    val disabled = isBatteryOptimizationDisabled()
+                    result.success(disabled)
+                }
+
+                "configureS3" -> {
+                    val s3Url = call.argument<String>("s3Url")
+                    val authToken = call.argument<String>("authToken")
+
+                    if (s3Url != null && authToken != null) {
+                        S3ConfigManager.saveConfig(this, s3Url, authToken)
+                        result.success(true)
+                    } else {
+                        result.error("INVALID_ARGUMENT", "S3 URL and token required", null)
+                    }
+                }
+
+                "getS3Config" -> {
+                    val config = mapOf(
+                        "s3Url" to S3ConfigManager.getS3Url(this),
+                        "authToken" to S3ConfigManager.getAuthToken(this),
+                        "isConfigured" to S3ConfigManager.isConfigured(this)
+                    )
+                    result.success(config)
+                }
+
+                "uploadAllToS3" -> {
+                    Thread {
+                        val count = S3UploadManager.uploadAllRecordings(this)
+                        runOnUiThread {
+                            result.success(count)
+                        }
+                    }.start()
+                }
+
                 else -> {
                     result.notImplemented()
                 }
@@ -64,34 +90,31 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    private fun startRecording(filePath: String): Boolean {
-        val service = CallRecorderAccessibilityService.getInstance()
-        return if (service != null) {
-            // Start foreground service to keep app alive
-            CallRecordingForegroundService.start(this)
-            service.startRecording(filePath)
-        } else {
-            false
-        }
-    }
-
-    private fun stopRecording(): String? {
-        val service = CallRecorderAccessibilityService.getInstance()
-        val result = service?.stopRecording()
-        // Stop foreground service after recording
-        CallRecordingForegroundService.stop(this)
-        return result
-    }
-
-    private fun isRecording(): Boolean {
-        val service = CallRecorderAccessibilityService.getInstance()
-        return service?.isCurrentlyRecording() ?: false
-    }
-
     private fun openAccessibilitySettings() {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         startActivity(intent)
+    }
+
+    /**
+     * CRITICAL: Request battery optimization disable (like Cube ACR)
+     */
+    private fun requestBatteryOptimizationDisable() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent().apply {
+                action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        }
+    }
+
+    private fun isBatteryOptimizationDisabled(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            return pm.isIgnoringBatteryOptimizations(packageName)
+        }
+        return true
     }
 
     override fun onDestroy() {

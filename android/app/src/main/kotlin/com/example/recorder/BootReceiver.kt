@@ -7,8 +7,7 @@ import android.content.Intent
 import android.util.Log
 
 /**
- * Broadcast receiver to handle device boot completion
- * Ensures the accessibility service is available after phone restart
+ * FIXED: Actually start foreground service at boot
  */
 class BootReceiver : BroadcastReceiver() {
 
@@ -20,13 +19,15 @@ class BootReceiver : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             "android.intent.action.QUICKBOOT_POWERON" -> {
-                Log.d(TAG, "📱 Device booted - Accessibility Service will auto-start if enabled")
+                Log.d(TAG, "📱 Device booted - Starting call recording service")
 
-                // Note: The accessibility service will automatically restart
-                // if it was enabled before reboot. No manual start needed.
-
-                // Optional: Show a notification that the service is ready
-                // You can add notification code here if desired
+                try {
+                    // CRITICAL FIX: Actually start the foreground service
+                    CallRecordingForegroundService.start(context)
+                    Log.d(TAG, "✅ Foreground service started at boot")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to start service at boot", e)
+                }
             }
         }
     }

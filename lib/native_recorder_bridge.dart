@@ -4,7 +4,7 @@ import 'dart:developer' as developer;
 
 /// Bridge to communicate with native Kotlin Accessibility Service
 class NativeRecorderBridge {
-  // FIXED: Match the package name in MainActivity.kt
+
   static const MethodChannel _channel = MethodChannel('com.example.recorder/native');
 
   /// Start recording to specified file path
@@ -49,7 +49,9 @@ class NativeRecorderBridge {
   /// Open device Accessibility Settings
   static Future<void> openAccessibilitySettings() async {
     try {
+
       await _channel.invokeMethod('openAccessibilitySettings');
+
     } on PlatformException catch (e) {
       developer.log('Error opening settings: ${e.message}', name: 'RecorderBridge', error: e);
     }
@@ -60,8 +62,7 @@ class NativeRecorderBridge {
     try {
       final result = await _channel.invokeMethod<bool>('isAccessibilityServiceEnabled');
       return result ?? false;
-    } on PlatformException catch (e) {
-      developer.log('Error checking service: ${e.message}', name: 'RecorderBridge', error: e);
+    } catch (e) {
       return false;
     }
   }
@@ -85,4 +86,65 @@ class NativeRecorderBridge {
       developer.log('Error stopping foreground service: ${e.message}', name: 'RecorderBridge', error: e);
     }
   }
+
+  /// Get the native recordings directory path
+  /// This ensures Flutter and native code use the same directory
+  static Future<String?> getRecordingsDirectory() async {
+    try {
+      final result = await _channel.invokeMethod<String>('getRecordingsDirectory');
+      developer.log('Recordings directory: $result', name: 'RecorderBridge');
+      return result;
+    } on PlatformException catch (e) {
+      developer.log('Error getting recordings directory: ${e.message}', name: 'RecorderBridge', error: e);
+      return null;
+    }
+  }
+
+  /// Configure S3 settings (saved in native SharedPreferences)
+  static Future<bool> configureS3(String s3Url, String authToken) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('configureS3', {
+        's3Url': s3Url,
+        'authToken': authToken,
+      });
+      developer.log('S3 configured: $result', name: 'RecorderBridge');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      developer.log('Error configuring S3: ${e.message}', name: 'RecorderBridge', error: e);
+      return false;
+    }
+  }
+
+  /// Get S3 configuration from native SharedPreferences
+  static Future<Map<String, dynamic>> getS3Config() async {
+    try {
+      final result = await _channel.invokeMethod<Map>('getS3Config');
+      return Map<String, dynamic>.from(result ?? {});
+    } on PlatformException catch (e) {
+      developer.log('Error getting S3 config: ${e.message}', name: 'RecorderBridge', error: e);
+      return {};
+    }
+  }
+
+  /// Upload all recordings to S3 (runs in native background thread)
+  static Future<int> uploadAllToS3() async {
+    try {
+      final result = await _channel.invokeMethod<int>('uploadAllToS3');
+      developer.log('Uploaded $result recordings', name: 'RecorderBridge');
+      return result ?? 0;
+    } on PlatformException catch (e) {
+      developer.log('Error uploading to S3: ${e.message}', name: 'RecorderBridge', error: e);
+      return 0;
+    }
+  }
+
+  static Future<void> requestBatteryOptimization() async {
+    await _channel.invokeMethod('requestBatteryOptimization');
+  }
+
+  static Future<bool> isBatteryOptimizationDisabled() async {
+    final result = await _channel.invokeMethod<bool>('isBatteryOptimizationDisabled');
+    return result ?? false;
+  }
+
 }

@@ -3,14 +3,19 @@
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_service_description"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeNotificationStateChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeAllMask"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRequestFilterKeyEvents"
-    android:canRetrieveWindowContent="true"
-    android:notificationTimeout="100"
-    android:packageNames="com.android.server.telecom,com.google.android.dialer,com.samsung.android.incallui" />
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="false"
+    android:notificationTimeout="0" />
 
     <!--
-    IMPORTANT: This allows monitoring phone call events through the Accessibility API.
-    The packageNames filter includes system dialer apps to reduce unnecessary event processing.
+    SIMPLIFIED CONFIG FOR MIUI/POCO COMPATIBILITY:
+    - typeAllMask: Accept all event types (required for service to be recognized)
+    - canRetrieveWindowContent="false": We don't need to read screen content
+    - notificationTimeout="0": Immediate event processing
+    - No packageNames filter: MIUI doesn't like package filtering
+    - Minimal flags: Only what's required
+
+    This makes MIUI recognize the service as valid and allow it to run.
     -->

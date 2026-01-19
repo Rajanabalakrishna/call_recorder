@@ -24,7 +24,7 @@ android {
         applicationId = "com.example.recorder"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 34
+        minSdk = 26
         targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -42,3 +42,12 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // OkHttp for S3 uploads
+    implementation ("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Kotlin coroutines (optional but recommended)
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+}
+

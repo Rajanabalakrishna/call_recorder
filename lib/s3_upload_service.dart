@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:http_parser/http_parser.dart';
 
 class S3UploadService {
+
   static final S3UploadService _instance = S3UploadService._internal();
   factory S3UploadService() => _instance;
   S3UploadService._internal();
