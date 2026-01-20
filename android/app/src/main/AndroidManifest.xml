@@ -1,33 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- CRITICAL PERMISSIONS FOR CALL RECORDING -->
+    <!-- ============================================================ -->
+    <!-- AUDIO RECORDING PERMISSIONS                                 -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MICROPHONE" />
+
+    <!-- ============================================================ -->
+    <!-- PHONE STATE DETECTION PERMISSIONS                           -->
+    <!-- ============================================================ -->
+    <!-- Required for TelephonyManager call state callbacks          -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    
+    <!-- Legacy permission (may be required on older devices)       -->
+    <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS"
+        tools:ignore="DeprecatedSinceApi" />
 
-    <!-- Foreground Service Required for Android 15/16 -->
+    <!-- ============================================================ -->
+    <!-- FOREGROUND SERVICE PERMISSIONS (Android 8.0+)              -->
+    <!-- ============================================================ -->
+    <!-- Required for services that run foreground notification     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- CHANGED: Use microphone instead of phoneCall -->
+    
+    <!-- Android 12+ (API 31+): Specific foreground service type   -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    
+    <!-- Android 14+ (API 34+): Required for notifications         -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- File Storage -->
+    <!-- ============================================================ -->
+    <!-- STORAGE PERMISSIONS                                         -->
+    <!-- ============================================================ -->
+    <!-- Android 11+ (API 30+): Request ALL_FILES_ACCESS for        -->
+    <!-- recording to app-specific directory                        -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!-- Accessibility Service Permission (Bypass mechanism) -->
+    <!-- ============================================================ -->
+    <!-- ACCESSIBILITY SERVICE PERMISSION (Special)                 -->
+    <!-- ============================================================ -->
+    <!-- Used for detecting call state changes (backup mechanism)   -->
+    <!-- User must manually enable in Settings                      -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
         tools:ignore="ProtectedPermissions" />
+
+    <!-- ============================================================ -->
+    <!-- DEVICE BOOT PERMISSION                                      -->
+    <!-- ============================================================ -->
+    <!-- Allow service to start after device boot                   -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:label="recorder"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true">
+        android:requestLegacyExternalStorage="true"
+        android:usesCleartextTraffic="false">
 
+        <!-- ============================================================ -->
+        <!-- MAIN ACTIVITY                                               -->
+        <!-- ============================================================ -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -39,15 +76,18 @@
             android:windowSoftInputMode="adjustResize">
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
-                android:resource="@style/NormalTheme"
-                />
+                android:resource="@style/NormalTheme" />
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- ACCESSIBILITY SERVICE (Critical for Call Recording) -->
+        <!-- ============================================================ -->
+        <!-- ACCESSIBILITY SERVICE (Master call detection)              -->
+        <!-- ============================================================ -->
+        <!-- Provides independent call state monitoring                 -->
+        <!-- Works even when app is swiped away                         -->
         <service
             android:name=".CallRecorderAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -61,26 +101,78 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- FOREGROUND SERVICE FOR RECORDING -->
-        <!-- CHANGED: foregroundServiceType from phoneCall to microphone -->
+        <!-- ============================================================ -->
+        <!-- CALL RECORDING SERVICE (Main recording logic)             -->
+        <!-- ============================================================ -->
+        <!-- Foreground service for persistent background recording    -->
+        <!-- Shows notification while recording                        -->
+        <service
+            android:name=".CallRecordingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- ============================================================ -->
+        <!-- CALL STATE BROADCAST RECEIVER (TelephonyManager)          -->
+        <!-- ============================================================ -->
+        <!-- Listens for native phone state changes                    -->
+        <!-- Triggered automatically by system                        -->
+        <receiver
+            android:name=".CallStateReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.READ_PHONE_STATE">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ============================================================ -->
+        <!-- BOOT RECEIVER (Device startup)                             -->
+        <!-- ============================================================ -->
+        <!-- Restarts monitoring after device reboot                   -->
+        <!-- Ensures recording capability survives device restart     -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ============================================================ -->
+        <!-- FOREGROUND SERVICE FOR LEGACY RECORDING (Deprecated)      -->
+        <!-- ============================================================ -->
+        <!-- Kept for backward compatibility                           -->
         <service
             android:name=".CallRecordingForegroundService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Flutter Embedding Metadata -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
 
+    <!-- ============================================================ -->
+    <!-- QUERIES FOR INTENT RESOLUTION (Android 11+)                -->
+    <!-- ============================================================ -->
+    <!-- Required for Android 11+ package visibility                -->
     <queries>
         <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
         </intent>
         <intent>
             <action android:name="android.intent.action.DIAL" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.PHONE_STATE" />
+        </intent>
     </queries>
+
 </manifest>
