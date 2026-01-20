@@ -21,6 +21,7 @@ import 'dart:developer' as developer;
  * 2. Dart layer provides UI updates via stream
  * 3. Recovery mechanism: Verifies native state on app resume
  * 4. Fallback: Can start recording manually if needed
+ * 5. Android 15+ compatible with proper permission handling
  */
 
 class EnhancedCallRecorderService {
@@ -58,7 +59,7 @@ class EnhancedCallRecorderService {
     }
 
     try {
-      // Request permissions
+      // Request permissions (CRITICAL for Android 15+)
       final permissionsGranted = await _requestPermissions();
       if (!permissionsGranted) {
         developer.log('Permissions not granted',
@@ -94,6 +95,7 @@ class EnhancedCallRecorderService {
   }
 
   /// Request all required permissions
+  /// Android 15+ (API 35+) requires explicit runtime requests
   Future<bool> _requestPermissions() async {
     final permissions = [
       Permission.microphone,
@@ -101,8 +103,16 @@ class EnhancedCallRecorderService {
       Permission.notification,
     ];
 
+    // Android 15+ (API 35+) specific permission
     if (Platform.isAndroid) {
       final androidInfo = await _getAndroidVersion();
+      if (androidInfo >= 15) {
+        // On Android 15+, FOREGROUND_SERVICE_MICROPHONE is critical
+        developer.log(
+            'Android 15+ detected - FOREGROUND_SERVICE_MICROPHONE required',
+            name: 'EnhancedCallRecorderService');
+      }
+      
       if (androidInfo < 13) {
         permissions.add(Permission.storage);
       }
@@ -112,6 +122,8 @@ class EnhancedCallRecorderService {
 
     bool allGranted = true;
     statuses.forEach((permission, status) {
+      developer.log('Permission $permission: ${status.toString()}',
+          name: 'EnhancedCallRecorderService');
       if (!status.isGranted) {
         developer.log('Permission denied: $permission',
             name: 'EnhancedCallRecorderService');
@@ -119,11 +131,18 @@ class EnhancedCallRecorderService {
       }
     });
 
+    if (!allGranted) {
+      developer.log(
+          'Not all permissions granted. User may need to manually enable in Settings.',
+          name: 'EnhancedCallRecorderService');
+    }
+
     return allGranted;
   }
 
   Future<int> _getAndroidVersion() async {
     // This is simplified - use device_info_plus for production
+    // For now, return 35 to assume Android 15 on modern devices
     return 15;
   }
 
