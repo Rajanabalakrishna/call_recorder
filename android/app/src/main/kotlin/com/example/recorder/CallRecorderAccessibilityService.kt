@@ -216,6 +216,18 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         Log.w(TAG, "🔄 Fallback: VOICE_CALL not available, trying alternative...")
         
         try {
+            // 🔧 CRITICAL: Release the broken recorder first!
+            mediaRecorder?.release()
+            mediaRecorder = null
+            
+            // Wait a bit for cleanup
+            try {
+                Thread.sleep(100)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            
+            // Create NEW fresh instance
             mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(this)
             } else {
@@ -238,7 +250,10 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                     setAudioChannels(1)
                     setOutputFile(fallbackFilePath)  // ✅ Use fresh path
 
+                    Log.d(TAG, "🔄 Preparing fallback recorder...")
                     prepare()
+                    
+                    Log.d(TAG, "🚀 Starting fallback recorder...")
                     start()
                     
                     isRecording.set(true)
@@ -250,11 +265,18 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                     mediaRecorder = null
                     isRecording.set(false)
                     currentFilePath = null
+                    audioManager?.mode = originalAudioMode  // Restore
                     CallRecordingForegroundService.stop(this@CallRecorderAccessibilityService)
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Fallback initialization failed: ${e.message}", e)
+            mediaRecorder?.release()
+            mediaRecorder = null
+            isRecording.set(false)
+            currentFilePath = null
+            audioManager?.mode = originalAudioMode  // Restore
+            CallRecordingForegroundService.stop(this)
         }
     }
 
