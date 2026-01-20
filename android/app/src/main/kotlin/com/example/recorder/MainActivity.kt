@@ -1,5 +1,7 @@
 package com.example.recorder
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -14,10 +16,14 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "com.example.recorder/background"
         private const val TAG = "MainActivity"
+        private const val NOTIFICATION_CHANNEL_ID = "call_recorder_channel"
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // Create notification channel (required for Android 8+)
+        createNotificationChannel()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -43,6 +49,27 @@ class MainActivity : FlutterActivity() {
 
         // Auto-start background recording on app launch
         startBackgroundRecording()
+    }
+
+    /// Create notification channel for Android 8.0+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "Call Recording Service",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Notification for active call recording"
+                setShowBadge(true)
+                enableLights(true)
+                enableVibration(false)
+            }
+
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+            
+            Log.d(TAG, "✅ Notification channel created: $NOTIFICATION_CHANNEL_ID")
+        }
     }
 
     /// Start background recording via Accessibility Service
