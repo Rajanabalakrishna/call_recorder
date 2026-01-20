@@ -17,12 +17,7 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.Executor
 
-/**
- * 🚀 OPTIMIZED: Uses PhoneStateListener as PRIMARY detection method
- * Accessibility service is now BACKUP only
- */
 class CallRecorderAccessibilityService : AccessibilityService() {
 
     companion object {
@@ -39,33 +34,28 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     private val isInCall = AtomicBoolean(false)
     private var telephonyManager: TelephonyManager? = null
 
-    // Background thread
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
 
-    // PhoneStateListener (PRIMARY detection)
     private var phoneStateListener: PhoneStateListener? = null
     private var telephonyCallback: TelephonyCallback? = null
 
-    // Debounce
     private var lastEventTime = 0L
-    private val EVENT_DEBOUNCE_MS = 1000L // Increased to 1 second
+    private val EVENT_DEBOUNCE_MS = 1000L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
 
-        // Background thread
         handlerThread = HandlerThread("CallRecorderThread", android.os.Process.THREAD_PRIORITY_BACKGROUND).apply {
             start()
             backgroundHandler = Handler(looper)
         }
 
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-
-        // CRITICAL: Use PhoneStateListener as PRIMARY detection
         registerPhoneStateListener()
 
+        Log.d(TAG, "✅ TelephonyCallback registered (Android 12+)")
         Log.d(TAG, "✅ Service Connected with PhoneStateListener")
         Log.d(TAG, "📱 App can be closed - Recording will continue")
     }
@@ -73,7 +63,6 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     @Suppress("DEPRECATION")
     private fun registerPhoneStateListener() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+ - Use TelephonyCallback
             telephonyCallback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                 override fun onCallStateChanged(state: Int) {
                     handleCallStateChange(state)
@@ -81,15 +70,13 @@ class CallRecorderAccessibilityService : AccessibilityService() {
             }
             try {
                 telephonyManager?.registerTelephonyCallback(
-                    { it.run() }, // Executor
+                    { it.run() },
                     telephonyCallback!!
                 )
-                Log.d(TAG, "✅ TelephonyCallback registered (Android 12+)")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Failed to register TelephonyCallback", e)
             }
         } else {
-            // Android 11 and below - Use PhoneStateListener
             phoneStateListener = object : PhoneStateListener() {
                 override fun onCallStateChanged(state: Int, phoneNumber: String?) {
                     handleCallStateChange(state)
@@ -97,7 +84,6 @@ class CallRecorderAccessibilityService : AccessibilityService() {
             }
             try {
                 telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
-                Log.d(TAG, "✅ PhoneStateListener registered (Android <12)")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Failed to register PhoneStateListener", e)
             }
@@ -105,18 +91,20 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     }
 
     private fun handleCallStateChange(state: Int) {
-        // Process on background thread
         backgroundHandler?.post {
             when (state) {
                 TelephonyManager.CALL_STATE_OFFHOOK -> {
                     if (isInCall.compareAndSet(false, true) && !isRecording.get()) {
                         Log.d(TAG, "📄 [PhoneState] CALL STARTED")
+                        
+                        // 🔥 CRITICAL: Minimize Flutter app to prevent ANR
+                        minimizeApp()
+                        
                         startCallRecording()
                     }
                 }
                 TelephonyManager.CALL_STATE_RINGING -> {
                     isInCall.set(true)
-                    Log.d(TAG, "📄 [PhoneState] RINGING")
                 }
                 TelephonyManager.CALL_STATE_IDLE -> {
                     if (isInCall.compareAndSet(true, false)) {
@@ -130,8 +118,24 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * 🔥 CRITICAL FIX: Minimize the Flutter app when call starts
+     * This prevents the main thread from being blocked by UI rendering
+     */
+    private fun minimizeApp() {
+        try {
+            val intent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+            Log.d(TAG, "🏠 App minimized to prevent ANR")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to minimize app", e)
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // BACKUP detection only - heavily throttled
         event ?: return
 
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
@@ -139,15 +143,12 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
         if (!isCallRelatedPackage(packageName)) return
 
-        // Heavy debouncing - only process once per second
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastEventTime < EVENT_DEBOUNCE_MS) return
         lastEventTime = currentTime
 
-        // Background processing
         backgroundHandler?.post {
             Log.d(TAG, "📄 [Accessibility Backup] $packageName")
-            // Only check if PhoneStateListener missed it
             if (!isInCall.get() && !isRecording.get()) {
                 checkCallState()
             }
@@ -229,7 +230,6 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         super.onDestroy()
         instance = null
         
-        // Unregister phone state listener
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             telephonyCallback?.let { telephonyManager?.unregisterTelephonyCallback(it) }
         } else {
