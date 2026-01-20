@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Exclude call recordings from cloud backup -->
+        <exclude domain="file" path="CallRecordings/" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Include app data in device transfers -->
+        <include domain="file" path="." />
+    </device-transfer>
+</data-extraction-rules>
