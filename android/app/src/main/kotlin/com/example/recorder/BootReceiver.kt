@@ -1,32 +1,46 @@
-// File: android/app/src/main/kotlin/com/example/recorder/BootReceiver.kt
 package com.example.recorder
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 
 /**
- * Broadcast receiver to handle device boot completion
- * Ensures the accessibility service is available after phone restart
+ * 📄 BootReceiver - Auto-starts Call Recorder service on device boot
+ * 
+ * Why this is important:
+ * - Device boots up → BootReceiver catches BOOT_COMPLETED event
+ * - Starts CallRecorderAccessibilityService automatically
+ * - No user interaction needed
+ * - Recording continues across device restarts
+ * 
+ * Like Cube ACR: User sets it up once, it works forever
  */
 class BootReceiver : BroadcastReceiver() {
-
     companion object {
         private const val TAG = "BootReceiver"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED,
-            "android.intent.action.QUICKBOOT_POWERON" -> {
-                Log.d(TAG, "📱 Device booted - Accessibility Service will auto-start if enabled")
-
-                // Note: The accessibility service will automatically restart
-                // if it was enabled before reboot. No manual start needed.
-
-                // Optional: Show a notification that the service is ready
-                // You can add notification code here if desired
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED || 
+            intent.action == "android.intent.action.QUICKBOOT_POWERON") {
+            
+            Log.d(TAG, "🖄 Device Boot Detected - Starting Call Recorder Background Service")
+            
+            try {
+                // Start Accessibility Service
+                val serviceIntent = Intent(context, CallRecorderAccessibilityService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.startService(serviceIntent)
+                }
+                
+                Log.d(TAG, "✅ Background Recording Services Started on Boot")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error starting service on boot: ${e.message}", e)
             }
         }
     }
