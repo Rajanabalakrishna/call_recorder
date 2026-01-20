@@ -15,7 +15,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _isAccessibilityEnabled = false;
-  List<FileSystemEntity> _recordings = [];
+  List<Map<String, dynamic>> _recordings = [];
   bool _isLoading = true;
 
   @override
@@ -63,20 +63,36 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadRecordings() async {
     try {
-      // FIXED: Use correct path matching native code
       final directory = Directory('/data/data/com.example.recorder/files/CallRecordings');
 
       if (await directory.exists()) {
-        final files = directory.listSync()
-            .where((file) => file.path.endsWith('.m4a'))
-            .toList();
+        // ✅ ASYNC: list() instead of listSync()
+        final entities = await directory.list().toList();
+        final files = entities.where((file) => file.path.endsWith('.m4a')).toList();
         
-        files.sort((a, b) => 
-            b.statSync().modified.compareTo(a.statSync().modified));
+        // ✅ ASYNC: Load file stats in parallel
+        final recordings = <Map<String, dynamic>>[];
+        for (final file in files) {
+          try {
+            final fileStat = await File(file.path).stat();
+            recordings.add({
+              'path': file.path,
+              'name': file.path.split('/').last,
+              'modified': fileStat.modified,
+              'size': fileStat.size,
+            });
+          } catch (e) {
+            debugPrint('Error reading file: $e');
+          }
+        }
+
+        // Sort by date
+        recordings.sort((a, b) => 
+            (b['modified'] as DateTime).compareTo(a['modified'] as DateTime));
 
         if (mounted) {
           setState(() {
-            _recordings = files;
+            _recordings = recordings;
           });
         }
       }
@@ -87,14 +103,30 @@ class _HomeScreenState extends State<HomeScreen> {
         final appDir = await getApplicationDocumentsDirectory();
         final altDirectory = Directory('${appDir.path}/CallRecordings');
         if (await altDirectory.exists()) {
-          final files = altDirectory.listSync()
-              .where((file) => file.path.endsWith('.m4a'))
-              .toList();
-          files.sort((a, b) => 
-              b.statSync().modified.compareTo(a.statSync().modified));
+          final entities = await altDirectory.list().toList();
+          final files = entities.where((file) => file.path.endsWith('.m4a')).toList();
+          
+          final recordings = <Map<String, dynamic>>[];
+          for (final file in files) {
+            try {
+              final fileStat = await File(file.path).stat();
+              recordings.add({
+                'path': file.path,
+                'name': file.path.split('/').last,
+                'modified': fileStat.modified,
+                'size': fileStat.size,
+              });
+            } catch (e) {
+              debugPrint('Error reading file: $e');
+            }
+          }
+
+          recordings.sort((a, b) => 
+              (b['modified'] as DateTime).compareTo(a['modified'] as DateTime));
+
           if (mounted) {
             setState(() {
-              _recordings = files;
+              _recordings = recordings;
             });
           }
         }
@@ -284,9 +316,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemCount: _recordings.length,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemBuilder: (context, index) {
-                      final file = File(_recordings[index].path);
-                      final stat = file.statSync();
-                      final fileName = file.path.split('/').last;
+                      final recording = _recordings[index];
+                      final path = recording['path'] as String;
+                      final name = recording['name'] as String;
+                      final modified = recording['modified'] as DateTime;
+                      final size = recording['size'] as int;
 
                       return Card(
                         margin: const EdgeInsets.only(bottom: 8),
@@ -299,13 +333,13 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           title: Text(
-                            fileName,
+                            name,
                             style: const TextStyle(fontSize: 13),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                           subtitle: Text(
-                            '${_formatDateTime(stat.modified)} • ${_formatFileSize(stat.size)}',
+                            '${_formatDateTime(modified)} • ${_formatFileSize(size)}',
                             style: const TextStyle(fontSize: 12),
                           ),
                           trailing: Row(
@@ -319,8 +353,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     MaterialPageRoute(
                                       builder: (context) =>
                                           AudioPlayerScreen(
-                                        filePath: file.path,
-                                        fileName: fileName,
+                                        filePath: path,
+                                        fileName: name,
                                       ),
                                     ),
                                   );
@@ -356,7 +390,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   );
 
                                   if (confirm == true) {
-                                    await file.delete();
+                                    await File(path).delete();
                                     await _loadRecordings();
                                     if (mounted) {
                                       ScaffoldMessenger.of(context)
