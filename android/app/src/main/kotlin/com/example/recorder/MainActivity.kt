@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.Locale
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -93,7 +94,7 @@ class MainActivity : FlutterActivity() {
      */
     private fun requestXiaomiAutostart() {
         try {
-            val manufacturer = Build.MANUFACTURER.toLowerCase()
+            val manufacturer = Build.MANUFACTURER.lowercase(Locale.getDefault())
             if (manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco")) {
                 Log.d(TAG, "📱 Xiaomi device detected - Opening autostart settings")
                 
