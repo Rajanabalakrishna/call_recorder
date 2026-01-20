@@ -223,6 +223,10 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 MediaRecorder()
             }
 
+            // ✅ CRITICAL FIX: Use NEW path, not stale currentFilePath
+            val fallbackFilePath = File(recordingsDir, fileName).absolutePath
+            currentFilePath = fallbackFilePath
+
             mediaRecorder?.apply {
                 try {
                     // Try VOICE_UPLINK (your voice in call)
@@ -232,7 +236,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                     setAudioSamplingRate(44100)
                     setAudioEncodingBitRate(128000)
                     setAudioChannels(1)
-                    setOutputFile(currentFilePath)
+                    setOutputFile(fallbackFilePath)  // ✅ Use fresh path
 
                     prepare()
                     start()
