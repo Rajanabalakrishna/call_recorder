@@ -1,101 +1,108 @@
 package com.example.recorder
 
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
+import android.util.Log
+import android.view.accessibility.AccessibilityManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity: FlutterActivity() {
-
-    private val CHANNEL = "com.example.recorder/native"
-    private var methodChannel: MethodChannel? = null
+class MainActivity : FlutterActivity() {
+    companion object {
+        private const val CHANNEL = "com.example.recorder/background"
+        private const val TAG = "MainActivity"
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-        methodChannel?.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "startRecording" -> {
-                    val filePath = call.argument<String>("filePath")
-                    if (filePath != null) {
-                        val success = startRecording(filePath)
-                        result.success(success)
-                    } else {
-                        result.error("INVALID_ARGUMENT", "File path is required", null)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "startBackgroundRecording" -> {
+                        startBackgroundRecording()
+                        result.success(true)
                     }
-                }
-
-                "stopRecording" -> {
-                    val savedPath = stopRecording()
-                    result.success(savedPath)
-                }
-
-                "isRecording" -> {
-                    val recording = isRecording()
-                    result.success(recording)
-                }
-
-                "openAccessibilitySettings" -> {
-                    openAccessibilitySettings()
-                    result.success(true)
-                }
-
-                "isAccessibilityServiceEnabled" -> {
-                    val enabled = CallRecorderAccessibilityService.isServiceEnabled()
-                    result.success(enabled)
-                }
-
-                "startForegroundService" -> {
-                    CallRecordingForegroundService.start(this)
-                    result.success(true)
-                }
-
-                "stopForegroundService" -> {
-                    CallRecordingForegroundService.stop(this)
-                    result.success(true)
-                }
-
-                else -> {
-                    result.notImplemented()
+                    "stopBackgroundRecording" -> {
+                        stopBackgroundRecording()
+                        result.success(true)
+                    }
+                    "isAccessibilityEnabled" -> {
+                        result.success(isAccessibilityServiceEnabled())
+                    }
+                    "openAccessibilitySettings" -> {
+                        openAccessibilitySettings()
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
                 }
             }
-        }
+
+        // Auto-start background recording on app launch
+        startBackgroundRecording()
     }
 
-    private fun startRecording(filePath: String): Boolean {
-        val service = CallRecorderAccessibilityService.getInstance()
-        return if (service != null) {
-            // Start foreground service to keep app alive
-            CallRecordingForegroundService.start(this)
-            service.startRecording(filePath)
+    /// Start background recording via Accessibility Service
+    private fun startBackgroundRecording() {
+        Log.d(TAG, "▶️ Starting Background Recording")
+
+        // Check if accessibility service is enabled
+        if (!isAccessibilityServiceEnabled()) {
+            Log.w(TAG, "⚠️ Accessibility Service not enabled - Opening Settings")
+            openAccessibilitySettings()
+            return
+        }
+
+        // Start the accessibility service
+        val intent = Intent(this, CallRecorderAccessibilityService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
         } else {
-            false
+            @Suppress("DEPRECATION")
+            startService(intent)
         }
+
+        Log.d(TAG, "✅ Background Recording Enabled")
     }
 
-    private fun stopRecording(): String? {
-        val service = CallRecorderAccessibilityService.getInstance()
-        val result = service?.stopRecording()
-        // Stop foreground service after recording
-        CallRecordingForegroundService.stop(this)
-        return result
+    /// Stop background recording
+    private fun stopBackgroundRecording() {
+        Log.d(TAG, "⏹️ Stopping Background Recording")
+        val intent = Intent(this, CallRecorderAccessibilityService::class.java)
+        stopService(intent)
+        Log.d(TAG, "✅ Service Stopped")
     }
 
-    private fun isRecording(): Boolean {
-        val service = CallRecorderAccessibilityService.getInstance()
-        return service?.isCurrentlyRecording() ?: false
+    /// Check if accessibility service is enabled
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val accessibilityManager = getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+        if (accessibilityManager == null) {
+            Log.w(TAG, "⚠️ AccessibilityManager is null")
+            return false
+        }
+
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: ""
+
+        val serviceName = "${packageName}/${CallRecorderAccessibilityService::class.java.name}"
+        val isEnabled = enabledServices.contains(serviceName)
+        
+        Log.d(TAG, "Accessibility Service Enabled: $isEnabled")
+        return isEnabled
     }
 
+    /// Open accessibility settings for user to enable service
     private fun openAccessibilitySettings() {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        startActivity(intent)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        methodChannel?.setMethodCallHandler(null)
+        Log.d(TAG, "🔓 Opening Accessibility Settings")
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening accessibility settings", e)
+        }
     }
 }
