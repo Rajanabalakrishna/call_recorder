@@ -24,12 +24,20 @@ class CallStateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null || intent == null) {
+            Log.w(TAG, "Null context or intent received")
             return
         }
 
-        if (intent.action == TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
+        try {
+            // Check both old and new action names for compatibility
+            val action = intent.action
+            if (action != TelephonyManager.ACTION_PHONE_STATE_CHANGED && 
+                action != "android.intent.action.PHONE_STATE") {
+                return
+            }
+
             val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
-            val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER) ?: "Unknown"
+            val incomingNumber = extractPhoneNumber(intent)
             
             Log.d(TAG, "Call State Changed: $state, Number: $incomingNumber")
 
@@ -43,8 +51,62 @@ class CallStateReceiver : BroadcastReceiver() {
                 TelephonyManager.EXTRA_STATE_IDLE -> {
                     handleCallIdle(context)
                 }
+                else -> {
+                    Log.d(TAG, "Unknown call state: $state")
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing broadcast: ${e.message}", e)
         }
+    }
+
+    /**
+     * Extract phone number from intent with multiple fallbacks
+     */
+    private fun extractPhoneNumber(intent: Intent): String {
+        return try {
+            // Primary: EXTRA_INCOMING_NUMBER (most common)
+            val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+            if (!incomingNumber.isNullOrEmpty() && incomingNumber != "Unknown") {
+                Log.d(TAG, "Phone number extracted: $incomingNumber")
+                return incomingNumber
+            }
+
+            // Secondary: Try alternative extra key (some devices use different keys)
+            val alternateNumber = intent.getStringExtra("incoming_number")
+            if (!alternateNumber.isNullOrEmpty()) {
+                Log.d(TAG, "Phone number extracted (alternate): $alternateNumber")
+                return alternateNumber
+            }
+
+            // Tertiary: Check all extras for phone-like values
+            val extras = intent.extras
+            if (extras != null) {
+                for (key in extras.keySet()) {
+                    val value = extras.get(key)
+                    if (value is String && isPhoneNumber(value)) {
+                        Log.d(TAG, "Phone number found in extra '$key': $value")
+                        return value
+                    }
+                }
+            }
+
+            Log.d(TAG, "No phone number found in intent extras")
+            "Unknown"
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting phone number: ${e.message}")
+            "Unknown"
+        }
+    }
+
+    /**
+     * Validate if string looks like a phone number
+     */
+    private fun isPhoneNumber(value: String): Boolean {
+        if (value.isEmpty() || value.length < 7) return false
+        // Check if string contains mostly digits
+        val digitCount = value.count { it.isDigit() }
+        return digitCount >= 7
     }
 
     /**
@@ -73,9 +135,10 @@ class CallStateReceiver : BroadcastReceiver() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(serviceIntent)
                 } else {
+                    @Suppress("DEPRECATION")
                     context.startService(serviceIntent)
                 }
-                Log.d(TAG, "Recording service started")
+                Log.d(TAG, "Recording service started for: $number")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start recording: ${e.message}", e)
             }
@@ -98,6 +161,7 @@ class CallStateReceiver : BroadcastReceiver() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(serviceIntent)
                 } else {
+                    @Suppress("DEPRECATION")
                     context.startService(serviceIntent)
                 }
                 Log.d(TAG, "Recording stop service started")
