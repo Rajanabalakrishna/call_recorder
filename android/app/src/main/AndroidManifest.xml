@@ -6,7 +6,6 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" />
     <uses-permission android:name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" />
-    <uses-permission android:name="com.android.permission.READ_PHONE_STATE" />
 
     <!-- Recording Permissions -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -14,7 +13,7 @@
 
     <!-- Background & System Permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -27,7 +26,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Accessibility Service (For Reliable Detection) -->
-    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="true"
@@ -49,10 +49,6 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            <!-- Specifies an Android theme to apply to this Activity as soon as
-                 the Android process has started. This theme is visible to the user
-                 while the Flutter UI initializes. After that, this theme continues
-                 to determine the Window background behind the Flutter UI. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
@@ -63,8 +59,7 @@
             </intent-filter>
         </activity>
         
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <!-- Flutter v2 Embedding -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
@@ -81,7 +76,6 @@
         </receiver>
 
         <!-- ACCESSIBILITY SERVICE: Background call detection and recording -->
-        <!-- ✅ CUBE ACR STYLE: Runs independently, continues even when app is closed -->
         <service
             android:name=".CallRecorderAccessibilityService"
             android:enabled="true"
@@ -96,11 +90,12 @@
         </service>
 
         <!-- FOREGROUND SERVICE: Keeps recording alive with notification -->
+        <!-- REMOVED mediaProjection type - using default microphone type -->
         <service
             android:name=".CallRecordingForegroundService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="microphone" />
 
     </application>
 

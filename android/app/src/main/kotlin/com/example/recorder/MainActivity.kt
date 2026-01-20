@@ -14,7 +14,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     companion object {
-        private const val CHANNEL = "com.example.recorder/background"
+        private const val CHANNEL = "com.example.recorder/native"
         private const val TAG = "MainActivity"
         private const val NOTIFICATION_CHANNEL_ID = "call_recorder_channel"
     }
@@ -36,7 +36,7 @@ class MainActivity : FlutterActivity() {
                         stopBackgroundRecording()
                         result.success(true)
                     }
-                    "isAccessibilityEnabled" -> {
+                    "isAccessibilityServiceEnabled" -> {
                         result.success(isAccessibilityServiceEnabled())
                     }
                     "openAccessibilitySettings" -> {
