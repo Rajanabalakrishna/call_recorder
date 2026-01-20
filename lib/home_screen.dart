@@ -70,10 +70,66 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadRecordings() async {
     try {
-      final directory = Directory('/data/data/com.example.recorder/files/CallRecordings');
+      // ✅ CRITICAL FIX: Load from getExternalCacheDir() like Android does
+      final tempDir = await getTemporaryDirectory();
+      debugPrint('📁 Loading recordings from: ${tempDir.path}');
+      final directory = Directory('${tempDir.path}/CallRecordings');
 
       if (await directory.exists()) {
+        debugPrint('✅ Directory exists');
         final entities = await directory.list().toList();
+        debugPrint('📊 Found ${entities.length} items');
+        
+        final files = entities
+            .where((file) => file.path.endsWith('.m4a'))
+            .toList();
+        debugPrint('🎙️ Found ${files.length} .m4a files');
+        
+        final recordings = <Map<String, dynamic>>[];
+        for (final file in files) {
+          try {
+            final fileStat = await File(file.path).stat();
+            recordings.add({
+              'path': file.path,
+              'name': file.path.split('/').last,
+              'modified': fileStat.modified,
+              'size': fileStat.size,
+            });
+            debugPrint('📄 Added recording: ${file.path}');
+          } catch (e) {
+            debugPrint('Error reading file: $e');
+          }
+        }
+
+        recordings.sort((a, b) => 
+            (b['modified'] as DateTime).compareTo(a['modified'] as DateTime));
+
+        if (mounted) {
+          setState(() {
+            _recordings = recordings;
+          });
+        }
+      } else {
+        debugPrint('❌ Directory does not exist: ${directory.path}');
+        debugPrint('This is normal if no calls have been recorded yet.');
+      }
+    } catch (e) {
+      debugPrint('❌ Error loading recordings: $e');
+      // Retry with alternative method
+      _loadRecordingsAlternative();
+    }
+  }
+
+  Future<void> _loadRecordingsAlternative() async {
+    try {
+      debugPrint('🔄 Trying alternative path...');
+      final appDir = await getApplicationCacheDirectory();
+      debugPrint('📁 Alternative path: ${appDir.path}');
+      
+      final altDirectory = Directory('${appDir.path}/CallRecordings');
+      if (await altDirectory.exists()) {
+        debugPrint('✅ Alternative directory exists');
+        final entities = await altDirectory.list().toList();
         final files = entities.where((file) => file.path.endsWith('.m4a')).toList();
         
         final recordings = <Map<String, dynamic>>[];
@@ -100,42 +156,8 @@ class _HomeScreenState extends State<HomeScreen> {
           });
         }
       }
-    } catch (e) {
-      debugPrint('Error loading recordings: $e');
-      try {
-        final appDir = await getApplicationDocumentsDirectory();
-        final altDirectory = Directory('${appDir.path}/CallRecordings');
-        if (await altDirectory.exists()) {
-          final entities = await altDirectory.list().toList();
-          final files = entities.where((file) => file.path.endsWith('.m4a')).toList();
-          
-          final recordings = <Map<String, dynamic>>[];
-          for (final file in files) {
-            try {
-              final fileStat = await File(file.path).stat();
-              recordings.add({
-                'path': file.path,
-                'name': file.path.split('/').last,
-                'modified': fileStat.modified,
-                'size': fileStat.size,
-              });
-            } catch (e) {
-              debugPrint('Error reading file: $e');
-            }
-          }
-
-          recordings.sort((a, b) => 
-              (b['modified'] as DateTime).compareTo(a['modified'] as DateTime));
-
-          if (mounted) {
-            setState(() {
-              _recordings = recordings;
-            });
-          }
-        }
-      } catch (e2) {
-        debugPrint('Alternative path also failed: $e2');
-      }
+    } catch (e2) {
+      debugPrint('❌ Alternative path also failed: $e2');
     }
   }
 
