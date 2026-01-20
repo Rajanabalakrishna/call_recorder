@@ -2,6 +2,8 @@ package com.example.recorder
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaRecorder
 import android.os.Build
@@ -36,6 +38,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     private var phoneStateListener: PhoneStateListener? = null
     private var telephonyCallback: TelephonyCallback? = null
     private var originalAudioMode: Int = AudioManager.MODE_NORMAL
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -184,7 +187,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 } catch (e: RuntimeException) {
                     Log.e(TAG, "❌ RuntimeException - start() failed: ${e.message}", e)
                     // This often means audio source is not available
-                    // Try fallback without VOICE_CALL
+                    // Try fallback with VOICE_UPLINK
                     tryFallbackRecording(recordingsDir, fileName)
                     
                 } catch (e: Exception) {
@@ -209,11 +212,10 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Fallback recording if VOICE_CALL fails
-     * Uses VOICE_UPLINK + VOICE_DOWNLINK or MIC as last resort
+     * First fallback: Try VOICE_UPLINK if VOICE_CALL fails
      */
     private fun tryFallbackRecording(recordingsDir: File, fileName: String) {
-        Log.w(TAG, "🔄 Fallback: VOICE_CALL not available, trying alternative...")
+        Log.w(TAG, "🔄 Fallback 1/2: VOICE_CALL denied, trying VOICE_UPLINK...")
         
         try {
             // 🔧 CRITICAL: Release the broken recorder first!
@@ -235,7 +237,6 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 MediaRecorder()
             }
 
-            // ✅ CRITICAL FIX: Use NEW path, not stale currentFilePath
             val fallbackFilePath = File(recordingsDir, fileName).absolutePath
             currentFilePath = fallbackFilePath
 
@@ -248,34 +249,119 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                     setAudioSamplingRate(44100)
                     setAudioEncodingBitRate(128000)
                     setAudioChannels(1)
-                    setOutputFile(fallbackFilePath)  // ✅ Use fresh path
+                    setOutputFile(fallbackFilePath)
 
-                    Log.d(TAG, "🔄 Preparing fallback recorder...")
+                    Log.d(TAG, "🔄 Preparing fallback 1 recorder...")
                     prepare()
                     
-                    Log.d(TAG, "🚀 Starting fallback recorder...")
+                    Log.d(TAG, "🚀 Starting fallback 1 recorder...")
                     start()
                     
                     isRecording.set(true)
-                    Log.d(TAG, "⚠️ FALLBACK RECORDING: Using VOICE_UPLINK (Your voice only)")
+                    Log.d(TAG, "⚠️ FALLBACK 1 RECORDING: Using VOICE_UPLINK (Your voice only)")
                     
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ Fallback also failed: ${e.message}", e)
+                    Log.e(TAG, "❌ Fallback 1 also failed: ${e.message}", e)
+                    // Try second fallback with MIC
+                    trySecondFallbackRecording(recordingsDir, fileName)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Fallback 1 initialization failed: ${e.message}", e)
+            trySecondFallbackRecording(recordingsDir, fileName)
+        }
+    }
+
+    /**
+     * Second fallback: Use MIC with AudioFocus
+     * Works on all devices but records lower quality
+     */
+    private fun trySecondFallbackRecording(recordingsDir: File, fileName: String) {
+        Log.w(TAG, "🔄 Fallback 2/2: Trying MIC with AudioFocus...")
+        
+        try {
+            // Release previous recorder
+            mediaRecorder?.release()
+            mediaRecorder = null
+            
+            try {
+                Thread.sleep(100)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            
+            // Request audio focus
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                
+                audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(audioAttributes)
+                    .setOnAudioFocusChangeListener { }
+                    .build()
+                
+                audioFocusRequest?.let {
+                    audioManager?.requestAudioFocus(it)
+                    Log.d(TAG, "🔊 AudioFocus requested")
+                }
+            }
+            
+            // Create fresh recorder
+            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+
+            val fallbackFilePath = File(recordingsDir, fileName).absolutePath
+            currentFilePath = fallbackFilePath
+
+            mediaRecorder?.apply {
+                try {
+                    // Use MIC - works on all devices
+                    setAudioSource(MediaRecorder.AudioSource.MIC)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioSamplingRate(44100)
+                    setAudioEncodingBitRate(128000)
+                    setAudioChannels(1)
+                    setOutputFile(fallbackFilePath)
+
+                    Log.d(TAG, "🔄 Preparing fallback 2 (MIC) recorder...")
+                    prepare()
+                    
+                    Log.d(TAG, "🚀 Starting fallback 2 (MIC) recorder...")
+                    start()
+                    
+                    isRecording.set(true)
+                    Log.d(TAG, "⚠️ FALLBACK 2 RECORDING: Using MIC (Microphone input only)")
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ All recording methods failed: ${e.message}", e)
                     release()
                     mediaRecorder = null
                     isRecording.set(false)
                     currentFilePath = null
                     audioManager?.mode = originalAudioMode  // Restore
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+                    }
                     CallRecordingForegroundService.stop(this@CallRecorderAccessibilityService)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Fallback initialization failed: ${e.message}", e)
+            Log.e(TAG, "❌ Fallback 2 initialization failed: ${e.message}", e)
             mediaRecorder?.release()
             mediaRecorder = null
             isRecording.set(false)
             currentFilePath = null
             audioManager?.mode = originalAudioMode  // Restore
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+            }
             CallRecordingForegroundService.stop(this)
         }
     }
@@ -300,6 +386,11 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Error releasing recorder: ${e.message}")
                 }
+            }
+            
+            // Release audio focus
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
             }
             
             // Restore audio mode
@@ -336,6 +427,9 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 audioManager?.mode = originalAudioMode
             } catch (e2: Exception) {
                 Log.e(TAG, "Error restoring audio mode in error handler: ${e2.message}")
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
             }
             CallRecordingForegroundService.stop(this)
         }
