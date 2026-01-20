@@ -1,12 +1,10 @@
-// File: lib/screens/home_screen.dart
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'audioplayerscreen.dart';
-import 'call_recorder_service.dart';
 import 'native_recorder_bridge.dart';
-
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,93 +14,118 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final CallRecorderService _recorderService = CallRecorderService();
-  bool _isInitialized = false;
   bool _isAccessibilityEnabled = false;
-  bool _isRecording = false;
   List<FileSystemEntity> _recordings = [];
-
-  // S3 Configuration
-  final TextEditingController _s3UrlController = TextEditingController();
-  final TextEditingController _s3TokenController = TextEditingController();
-  bool _isS3Configured = false;
-  bool _isUploading = false;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _initializeApp();
+    _initialize();
   }
 
-  Future<void> _initializeApp() async {
-    await _checkAccessibilityStatus();
+  Future<void> _initialize() async {
+    await _requestPermissions();
+    await _checkAccessibility();
     await _loadRecordings();
-    setState(() {
-      _isS3Configured = _recorderService.isS3Configured;
-    });
-  }
-
-  Future<void> _checkAccessibilityStatus() async {
-    final enabled = await NativeRecorderBridge.isAccessibilityServiceEnabled();
-    setState(() {
-      _isAccessibilityEnabled = enabled;
-    });
-
-    if (enabled) {
-      await _initializeRecorderService();
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
-  Future<void> _initializeRecorderService() async {
-    final success = await _recorderService.initialize();
-    setState(() {
-      _isInitialized = success;
-    });
+  Future<void> _requestPermissions() async {
+    try {
+      await [
+        Permission.microphone,
+        Permission.phone,
+        Permission.notification,
+        Permission.storage,
+      ].request();
+    } catch (e) {
+      debugPrint('Permission error: $e');
+    }
+  }
+
+  Future<void> _checkAccessibility() async {
+    try {
+      final enabled = await NativeRecorderBridge.isAccessibilityServiceEnabled();
+      if (mounted) {
+        setState(() {
+          _isAccessibilityEnabled = enabled;
+        });
+      }
+    } catch (e) {
+      debugPrint('Accessibility check error: $e');
+    }
   }
 
   Future<void> _loadRecordings() async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final recordingsDir = Directory('${directory.path}/CallRecordings');
+      // FIXED: Use correct path matching native code
+      final directory = Directory('/data/data/com.example.recorder/files/CallRecordings');
 
-      if (await recordingsDir.exists()) {
-        final files = recordingsDir.listSync()
+      if (await directory.exists()) {
+        final files = directory.listSync()
             .where((file) => file.path.endsWith('.m4a'))
             .toList();
-        files.sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
+        
+        files.sort((a, b) => 
+            b.statSync().modified.compareTo(a.statSync().modified));
 
-        setState(() {
-          _recordings = files;
-        });
+        if (mounted) {
+          setState(() {
+            _recordings = files;
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error loading recordings: $e');
+      // Try alternative path
+      try {
+        final appDir = await getApplicationDocumentsDirectory();
+        final altDirectory = Directory('${appDir.path}/CallRecordings');
+        if (await altDirectory.exists()) {
+          final files = altDirectory.listSync()
+              .where((file) => file.path.endsWith('.m4a'))
+              .toList();
+          files.sort((a, b) => 
+              b.statSync().modified.compareTo(a.statSync().modified));
+          if (mounted) {
+            setState(() {
+              _recordings = files;
+            });
+          }
+        }
+      } catch (e2) {
+        debugPrint('Alternative path also failed: $e2');
+      }
     }
   }
 
   Future<void> _openAccessibilitySettings() async {
     await NativeRecorderBridge.openAccessibilitySettings();
-
     if (mounted) {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Enable Accessibility Service'),
+          title: const Text('✅ Enable Service'),
           content: const Text(
-            'Follow these steps:\n\n'
-                '1. Find "Company Call Recorder" in the list\n'
-                '2. Turn ON the service\n'
-                '3. If you see "Restricted", tap the 3-dot menu (⋮) and select "Allow restricted settings"\n'
-                '4. Come back to the app\n\n'
-                'Recording will start AUTOMATICALLY when you receive or make calls.',
+            'Steps:\n'
+            '1. Find "Company Call Recorder"\n'
+            '2. Turn ON the service\n'
+            '3. Allow restricted settings if asked\n'
+            '4. Return to app\n\n'
+            '📱 Calls will record automatically!',
           ),
           actions: [
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
-                _checkAccessibilityStatus();
+                _checkAccessibility();
               },
-              child: const Text('I\'ve Enabled It'),
+              child: const Text('Done'),
             ),
           ],
         ),
@@ -110,145 +133,41 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Configure S3
-  Future<void> _showS3ConfigDialog() async {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Configure S3 Upload'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _s3UrlController,
-                decoration: const InputDecoration(
-                  labelText: 'S3 URL',
-                  hintText: 'https://your-bucket.s3.amazonaws.com',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _s3TokenController,
-                decoration: const InputDecoration(
-                  labelText: 'Auth Token',
-                  hintText: 'Your access token',
-                ),
-                obscureText: true,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final url = _s3UrlController.text.trim();
-              final token = _s3TokenController.text.trim();
-
-              if (url.isNotEmpty && token.isNotEmpty) {
-                _recorderService.configureS3(url: url, token: token);
-                setState(() {
-                  _isS3Configured = true;
-                });
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('S3 configured successfully')),
-                );
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Upload all recordings to S3
-  Future<void> _uploadAllToS3() async {
-    if (!_isS3Configured) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please configure S3 first')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isUploading = true;
-    });
-
-    final count = await _recorderService.uploadAllPendingRecordings();
-
-    setState(() {
-      _isUploading = false;
-    });
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Uploaded $count recordings to S3')),
-      );
-    }
-  }
-
-  Future<void> _testRecording() async {
-    if (_isRecording) {
-      // Stop recording
-      final savedPath = await _recorderService.stopManualRecording();
-      setState(() {
-        _isRecording = false;
-      });
-
-      if (savedPath != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Recording saved: ${savedPath.split('/').last}')),
-        );
-        await _loadRecordings();
-      }
-    } else {
-      // Start recording
-      final success = await _recorderService.startManualRecording();
-      setState(() {
-        _isRecording = success;
-      });
-
-      if (success && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Test recording started')),
-        );
-      }
-    }
-  }
-
   String _formatFileSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
-  String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.day}/${dateTime.month}/${dateTime.year} '
-        '${dateTime.hour.toString().padLeft(2, '0')}:'
-        '${dateTime.minute.toString().padLeft(2, '0')}';
+  String _formatDateTime(DateTime dt) {
+    return '${dt.day}/${dt.month}/${dt.year} '
+        '${dt.hour.toString().padLeft(2, '0')}:'
+        '${dt.minute.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Company Call Recorder'),
+        title: const Text('🎙️ Call Recorder'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.cloud_upload),
-            onPressed: _showS3ConfigDialog,
-            tooltip: 'Configure S3',
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadRecordings,
-            tooltip: 'Refresh recordings',
+            onPressed: () async {
+              setState(() => _isLoading = true);
+              await _loadRecordings();
+              await _checkAccessibility();
+              setState(() => _isLoading = false);
+            },
           ),
         ],
       ),
@@ -257,161 +176,70 @@ class _HomeScreenState extends State<HomeScreen> {
           // Status Card
           Card(
             margin: const EdgeInsets.all(16),
+            color: _isAccessibilityEnabled 
+                ? Colors.green[50] 
+                : Colors.red[50],
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Icon(
-                        _isAccessibilityEnabled
-                            ? Icons.check_circle
-                            : Icons.error,
-                        color: _isAccessibilityEnabled
-                            ? Colors.green
-                            : Colors.red,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Accessibility Service',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const Spacer(),
-                      Text(
-                        _isAccessibilityEnabled ? 'Enabled' : 'Disabled',
-                        style: TextStyle(
-                          color: _isAccessibilityEnabled
-                              ? Colors.green
-                              : Colors.red,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                  Icon(
+                    _isAccessibilityEnabled
+                        ? Icons.check_circle
+                        : Icons.error,
+                    color: _isAccessibilityEnabled
+                        ? Colors.green
+                        : Colors.red,
+                    size: 32,
                   ),
-                  if (!_isAccessibilityEnabled) ...[
-                    const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      onPressed: _openAccessibilitySettings,
-                      icon: const Icon(Icons.settings),
-                      label: const Text('Enable Service'),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _isAccessibilityEnabled
+                              ? '✅ Recording Active'
+                              : '❌ Service Disabled',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _isAccessibilityEnabled
+                              ? 'Calls will be recorded automatically'
+                              : 'Enable service to start recording',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Icon(
-                        _isInitialized
-                            ? Icons.check_circle
-                            : Icons.warning,
-                        color: _isInitialized
-                            ? Colors.green
-                            : Colors.orange,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Auto Recording',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const Spacer(),
-                      Text(
-                        _isInitialized ? 'Active' : 'Inactive',
-                        style: TextStyle(
-                          color: _isInitialized
-                              ? Colors.green
-                              : Colors.orange,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
                   ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Icon(
-                        _isS3Configured
-                            ? Icons.cloud_done
-                            : Icons.cloud_off,
-                        color: _isS3Configured
-                            ? Colors.blue
-                            : Colors.grey,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'S3 Upload',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const Spacer(),
-                      Text(
-                        _isS3Configured ? 'Configured' : 'Not Set',
-                        style: TextStyle(
-                          color: _isS3Configured
-                              ? Colors.blue
-                              : Colors.grey,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
+                  if (!_isAccessibilityEnabled)
+                    ElevatedButton(
+                      onPressed: _openAccessibilitySettings,
+                      child: const Text('Enable'),
+                    ),
                 ],
               ),
             ),
           ),
 
-          // Action Buttons
-          if (_isAccessibilityEnabled)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _testRecording,
-                      icon: Icon(_isRecording ? Icons.stop : Icons.mic),
-                      label: Text(_isRecording ? 'Stop Test Recording' : 'Test Recording'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _isRecording ? Colors.red : Colors.blue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.all(16),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (_isS3Configured)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _isUploading ? null : _uploadAllToS3,
-                        icon: _isUploading
-                            ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                            : const Icon(Icons.cloud_upload),
-                        label: Text(_isUploading ? 'Uploading...' : 'Upload All to S3'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.all(16),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-          const SizedBox(height: 16),
-
-          // Recordings List Header
+          // Recordings Header
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Text(
-                  'Recordings (${_recordings.length})',
-                  style: Theme.of(context).textTheme.titleLarge,
+                  '📁 Recordings (${_recordings.length})',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -423,102 +251,132 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: _recordings.isEmpty
                 ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.folder_open, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No recordings yet',
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Calls will be recorded AUTOMATICALLY',
-                    style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                  ),
-                ],
-              ),
-            )
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.folder_open,
+                          size: 64,
+                          color: Colors.grey[400],
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No recordings yet',
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _isAccessibilityEnabled
+                              ? 'Make a call to test recording'
+                              : 'Enable service to start',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
                 : ListView.builder(
-              itemCount: _recordings.length,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemBuilder: (context, index) {
-                final file = File(_recordings[index].path);
-                final stat = file.statSync();
-                final fileName = file.path.split('/').last;
+                    itemCount: _recordings.length,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemBuilder: (context, index) {
+                      final file = File(_recordings[index].path);
+                      final stat = file.statSync();
+                      final fileName = file.path.split('/').last;
 
-                return Card(
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      child: Icon(Icons.phone_in_talk),
-                    ),
-                    title: Text(
-                      fileName,
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                    subtitle: Text(
-                      '${_formatDateTime(stat.modified)} • ${_formatFileSize(stat.size)}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => AudioPlayerScreen(
-                            filePath: file.path,
-                            fileName: fileName,
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.blue[100],
+                            child: const Icon(
+                              Icons.phone_in_talk,
+                              color: Colors.blue,
+                            ),
+                          ),
+                          title: Text(
+                            fileName,
+                            style: const TextStyle(fontSize: 13),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            '${_formatDateTime(stat.modified)} • ${_formatFileSize(stat.size)}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.play_arrow),
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          AudioPlayerScreen(
+                                        filePath: file.path,
+                                        fileName: fileName,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete,
+                                    color: Colors.red),
+                                onPressed: () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: const Text('Delete?'),
+                                      content: const Text(
+                                          'Delete this recording?'),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, false),
+                                          child: const Text('Cancel'),
+                                        ),
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, true),
+                                          child: const Text(
+                                            'Delete',
+                                            style: TextStyle(
+                                                color: Colors.red),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+
+                                  if (confirm == true) {
+                                    await file.delete();
+                                    await _loadRecordings();
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                            content: Text('Deleted')),
+                                      );
+                                    }
+                                  }
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       );
                     },
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Delete Recording'),
-                            content: const Text('Are you sure you want to delete this recording?'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, false),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, true),
-                                child: const Text('Delete', style: TextStyle(color: Colors.red)),
-                              ),
-                            ],
-                          ),
-                        );
-
-                        if (confirm == true) {
-                          await file.delete();
-                          await _loadRecordings();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Recording deleted')),
-                            );
-                          }
-                        }
-                      },
-                    ),
                   ),
-                );
-              },
-            ),
           ),
         ],
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _s3UrlController.dispose();
-    _s3TokenController.dispose();
-    _recorderService.dispose();
-    super.dispose();
   }
 }
