@@ -3,6 +3,7 @@ package com.example.recorder
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
@@ -21,43 +22,34 @@ import java.util.concurrent.atomic.AtomicBoolean
 class CallRecorderAccessibilityService : AccessibilityService() {
 
     companion object {
-        private const val TAG = "CallRecorderService"
+        private const val TAG = "CallRecorder"
         private var instance: CallRecorderAccessibilityService? = null
-
         fun getInstance(): CallRecorderAccessibilityService? = instance
-        fun isServiceEnabled(): Boolean = instance != null
     }
 
     private var mediaRecorder: MediaRecorder? = null
     private val isRecording = AtomicBoolean(false)
-    private var currentFilePath: String? = null
     private val isInCall = AtomicBoolean(false)
+    private var currentFilePath: String? = null
     private var telephonyManager: TelephonyManager? = null
-
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
-
     private var phoneStateListener: PhoneStateListener? = null
     private var telephonyCallback: TelephonyCallback? = null
-
-    private var lastEventTime = 0L
-    private val EVENT_DEBOUNCE_MS = 1000L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        Log.d(TAG, "🎙️ Accessibility Service Connected")
 
-        handlerThread = HandlerThread("CallRecorderThread", android.os.Process.THREAD_PRIORITY_BACKGROUND).apply {
+        handlerThread = HandlerThread("CallRecorderThread").apply {
             start()
             backgroundHandler = Handler(looper)
         }
 
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         registerPhoneStateListener()
-
-        Log.d(TAG, "✅ TelephonyCallback registered (Android 12+)")
-        Log.d(TAG, "✅ Service Connected with PhoneStateListener")
-        Log.d(TAG, "📱 App can be closed - Recording will continue")
+        Log.d(TAG, "✅ Phone State Listener Registered")
     }
 
     @Suppress("DEPRECATION")
@@ -65,160 +57,154 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             telephonyCallback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                 override fun onCallStateChanged(state: Int) {
-                    handleCallStateChange(state)
+                    handleCallState(state)
                 }
             }
             try {
-                telephonyManager?.registerTelephonyCallback(
-                    { it.run() },
-                    telephonyCallback!!
-                )
+                telephonyManager?.registerTelephonyCallback({ it.run() }, telephonyCallback!!)
+                Log.d(TAG, "✅ TelephonyCallback Registered (Android 12+)")
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to register TelephonyCallback", e)
+                Log.e(TAG, "Error registering callback: ${e.message}")
             }
         } else {
             phoneStateListener = object : PhoneStateListener() {
                 override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                    handleCallStateChange(state)
+                    handleCallState(state)
                 }
             }
             try {
                 telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
+                Log.d(TAG, "✅ PhoneStateListener Registered (Android 11-)")
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to register PhoneStateListener", e)
+                Log.e(TAG, "Error registering listener: ${e.message}")
             }
         }
     }
 
-    private fun handleCallStateChange(state: Int) {
+    private fun handleCallState(state: Int) {
+        Log.d(TAG, "📱 Call State Changed: $state (0=IDLE, 1=RINGING, 2=OFFHOOK)")
+        
         backgroundHandler?.post {
             when (state) {
                 TelephonyManager.CALL_STATE_OFFHOOK -> {
-                    if (isInCall.compareAndSet(false, true) && !isRecording.get()) {
-                        Log.d(TAG, "📄 [PhoneState] CALL STARTED")
-                        
-                        // 🔥 CRITICAL: Minimize Flutter app to prevent ANR
-                        minimizeApp()
-                        
-                        startCallRecording()
+                    if (isInCall.compareAndSet(false, true)) {
+                        Log.d(TAG, "📞 CALL STARTED - Starting Recording")
+                        startRecording()
+                    }
+                }
+                TelephonyManager.CALL_STATE_IDLE -> {
+                    if (isInCall.compareAndSet(true, false)) {
+                        Log.d(TAG, "☎️ CALL ENDED - Stopping Recording")
+                        stopRecording()
                     }
                 }
                 TelephonyManager.CALL_STATE_RINGING -> {
                     isInCall.set(true)
                 }
-                TelephonyManager.CALL_STATE_IDLE -> {
-                    if (isInCall.compareAndSet(true, false)) {
-                        Log.d(TAG, "📄 [PhoneState] CALL ENDED")
-                        if (isRecording.get()) {
-                            stopCallRecording()
-                        }
-                    }
-                }
             }
         }
     }
 
-    /**
-     * 🔥 CRITICAL FIX: Minimize the Flutter app when call starts
-     * This prevents the main thread from being blocked by UI rendering
-     */
-    private fun minimizeApp() {
+    private fun startRecording() {
+        if (isRecording.get()) {
+            Log.w(TAG, "⚠️ Already recording")
+            return
+        }
+
         try {
-            val intent = Intent(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_HOME)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            // Create recordings directory
+            val recordingsDir = File(filesDir, "CallRecordings")
+            if (!recordingsDir.exists()) recordingsDir.mkdirs()
+
+            // Generate file path
+            val timestamp = System.currentTimeMillis()
+            val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+            val dateStr = dateFormat.format(Date(timestamp))
+            val fileName = "call_${dateStr}_$timestamp.m4a"
+            currentFilePath = File(recordingsDir, fileName).absolutePath
+
+            Log.d(TAG, "📁 Recording to: $currentFilePath")
+
+            // Start foreground service notification
+            CallRecordingForegroundService.start(this)
+
+            // Initialize MediaRecorder
+            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
             }
-            startActivity(intent)
-            Log.d(TAG, "🏠 App minimized to prevent ANR")
+
+            mediaRecorder?.apply {
+                // 🔑 CRITICAL: VOICE_CALL captures BOTH sides of call audio (like Cube ACR)
+                setAudioSource(MediaRecorder.AudioSource.VOICE_CALL)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioSamplingRate(44100)
+                setAudioEncodingBitRate(128000)
+                setOutputFile(currentFilePath)
+
+                try {
+                    prepare()
+                    start()
+                    isRecording.set(true)
+                    Log.d(TAG, "🔴 RECORDING STARTED: $fileName")
+                    Log.d(TAG, "💯 Audio Source: VOICE_CALL (Both sides)")
+                } catch (e: IOException) {
+                    Log.e(TAG, "❌ Failed to start recording: ${e.message}", e)
+                    release()
+                    mediaRecorder = null
+                    isRecording.set(false)
+                    currentFilePath = null
+                    CallRecordingForegroundService.stop(this@CallRecorderAccessibilityService)
+                }
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to minimize app", e)
+            Log.e(TAG, "❌ Exception during startRecording: ${e.message}", e)
+            mediaRecorder?.release()
+            mediaRecorder = null
+            isRecording.set(false)
+            currentFilePath = null
+            CallRecordingForegroundService.stop(this)
+        }
+    }
+
+    private fun stopRecording() {
+        if (!isRecording.get()) {
+            Log.w(TAG, "⚠️ Not recording")
+            return
+        }
+
+        try {
+            mediaRecorder?.apply {
+                stop()
+                release()
+            }
+            mediaRecorder = null
+            isRecording.set(false)
+
+            val filePath = currentFilePath
+            currentFilePath = null
+
+            if (filePath != null) {
+                val file = File(filePath)
+                val sizeMB = file.length() / (1024.0 * 1024.0)
+                Log.d(TAG, "✅ RECORDING SAVED: ${file.name} (${String.format("%.2f", sizeMB)} MB)")
+            }
+
+            CallRecordingForegroundService.stop(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error stopping recording: ${e.message}", e)
+            mediaRecorder?.release()
+            mediaRecorder = null
+            isRecording.set(false)
+            CallRecordingForegroundService.stop(this)
         }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        event ?: return
-
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
-
-        val packageName = event.packageName?.toString() ?: return
-        if (!isCallRelatedPackage(packageName)) return
-
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastEventTime < EVENT_DEBOUNCE_MS) return
-        lastEventTime = currentTime
-
-        backgroundHandler?.post {
-            Log.d(TAG, "📄 [Accessibility Backup] $packageName")
-            if (!isInCall.get() && !isRecording.get()) {
-                checkCallState()
-            }
-        }
-    }
-
-    private fun checkCallState() {
-        try {
-            val callState = telephonyManager?.callState ?: TelephonyManager.CALL_STATE_IDLE
-            handleCallStateChange(callState)
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error checking call state", e)
-        }
-    }
-
-    private fun isCallRelatedPackage(packageName: String): Boolean {
-        return packageName.contains("dialer") ||
-               packageName.contains("phone") ||
-               packageName.contains("telecom") ||
-               packageName.contains("incallui")
-    }
-
-    private fun startCallRecording() {
-        if (isRecording.get()) return
-
-        try {
-            CallRecordingForegroundService.start(this)
-            val filePath = generateRecordingFilePath()
-            currentFilePath = filePath
-
-            if (startRecording(filePath)) {
-                Log.d(TAG, "✅ Recording started: $filePath")
-            } else {
-                Log.e(TAG, "❌ Failed to start recording")
-                currentFilePath = null
-                CallRecordingForegroundService.stop(this)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error in startCallRecording", e)
-        }
-    }
-
-    private fun stopCallRecording() {
-        if (!isRecording.get()) return
-
-        try {
-            val savedPath = stopRecording()
-            if (savedPath != null) {
-                val file = File(savedPath)
-                if (file.exists()) {
-                    val sizeMB = file.length() / (1024.0 * 1024.0)
-                    Log.d(TAG, "✅ Saved: ${file.name} (${String.format("%.2f", sizeMB)} MB)")
-                }
-            }
-            CallRecordingForegroundService.stop(this)
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error in stopCallRecording", e)
-        }
-    }
-
-    private fun generateRecordingFilePath(): String {
-        val recordingsDir = File(filesDir, "CallRecordings")
-        if (!recordingsDir.exists()) recordingsDir.mkdirs()
-        
-        val timestamp = System.currentTimeMillis()
-        val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-        val dateStr = dateFormat.format(Date(timestamp))
-        val fileName = "call_${dateStr}_$timestamp.m4a"
-        
-        return File(recordingsDir, fileName).absolutePath
+        // Not needed for call recording, but required by interface
     }
 
     override fun onInterrupt() {
@@ -229,87 +215,20 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        
+
+        stopRecording()
+        CallRecordingForegroundService.stop(this)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             telephonyCallback?.let { telephonyManager?.unregisterTelephonyCallback(it) }
         } else {
             phoneStateListener?.let { telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE) }
         }
-        
-        stopRecording()
-        CallRecordingForegroundService.stop(this)
-        
+
         handlerThread?.quitSafely()
         handlerThread = null
         backgroundHandler = null
-        
+
         Log.d(TAG, "❌ Service Destroyed")
     }
-
-    fun startRecording(filePath: String): Boolean {
-        if (isRecording.get()) return false
-
-        return try {
-            currentFilePath = filePath
-
-            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(this)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }.apply {
-                setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(44100)
-                setAudioEncodingBitRate(128000)
-                setOutputFile(filePath)
-
-                try {
-                    prepare()
-                    start()
-                    isRecording.set(true)
-                    true
-                } catch (e: IOException) {
-                    Log.e(TAG, "Failed to prepare", e)
-                    release()
-                    false
-                }
-            }
-
-            isRecording.get()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start", e)
-            mediaRecorder?.release()
-            mediaRecorder = null
-            false
-        }
-    }
-
-    fun stopRecording(): String? {
-        if (!isRecording.get()) return null
-
-        return try {
-            mediaRecorder?.apply {
-                stop()
-                release()
-            }
-            mediaRecorder = null
-            isRecording.set(false)
-
-            val savedPath = currentFilePath
-            currentFilePath = null
-            savedPath
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping", e)
-            mediaRecorder?.release()
-            mediaRecorder = null
-            isRecording.set(false)
-            currentFilePath = null
-            null
-        }
-    }
-
-    fun isCurrentlyRecording(): Boolean = isRecording.get()
-    fun getCurrentFilePath(): String? = currentFilePath
 }
