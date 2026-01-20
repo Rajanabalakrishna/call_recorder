@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -23,6 +25,7 @@ import java.util.*
  * - Uses MediaRecorder for audio capture
  * - Maintains foreground notification
  * - Handles service lifecycle and recovery
+ * - Android 15+ (API 35+) compatible with runtime permissions
  * 
  * Architecture: Foreground Service with persistent notification
  * Lifecycle: Can survive app destruction but respects Android resource management
@@ -62,7 +65,46 @@ class CallRecordingService : Service() {
 
         // Show persistent notification
         val notification = createNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        
+        // Start foreground with proper permission handling
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+ (API 34+) - Check permission before starting foreground
+                if (ContextCompat.checkSelfPermission(
+                        this,
+                        "android.permission.FOREGROUND_SERVICE_MICROPHONE"
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    )
+                    Log.d(TAG, "Foreground service started with MICROPHONE type")
+                } else {
+                    Log.w(
+                        TAG,
+                        "FOREGROUND_SERVICE_MICROPHONE permission not granted, trying without type"
+                    )
+                    startForeground(NOTIFICATION_ID, notification)
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // Android 8-13 (API 26-33)
+                startForeground(NOTIFICATION_ID, notification)
+                Log.d(TAG, "Foreground service started (Android 8-13)")
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: SecurityException) {
+            Log.e(
+                TAG,
+                "SecurityException starting foreground: ${e.message}",
+                e
+            )
+            // Continue anyway - recording will still work, just no notification
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting foreground: ${e.message}", e)
+        }
 
         // Return START_STICKY to restart service if killed
         return START_STICKY
@@ -123,7 +165,11 @@ class CallRecordingService : Service() {
                     Log.d(TAG, "Recording started: $filePath (Phone: $phoneNumber)")
 
                     // Mark as recording in manager
-                    RecordingManager.markRecordingStarted(this@CallRecordingService, filePath, phoneNumber)
+                    RecordingManager.markRecordingStarted(
+                        this@CallRecordingService,
+                        filePath,
+                        phoneNumber
+                    )
 
                 } catch (e: IOException) {
                     Log.e(TAG, "Failed to prepare MediaRecorder: ${e.message}", e)
@@ -261,7 +307,8 @@ class CallRecordingService : Service() {
                 enableVibration(false)
             }
 
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
     }
