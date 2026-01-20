@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.app.ServiceInfo
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
@@ -39,7 +40,7 @@ class CallRecordingForegroundService : Service() {
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    android.app.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_RECORDING
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_RECORDING
                 )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
