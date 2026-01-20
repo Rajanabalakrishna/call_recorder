@@ -2,9 +2,12 @@ package com.example.recorder
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityManager
@@ -22,8 +25,8 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Create notification channel (required for Android 8+)
         createNotificationChannel()
+        requestBatteryOptimizationExclusion()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -47,11 +50,68 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // Auto-start background recording on app launch
         startBackgroundRecording()
     }
 
-    /// Create notification channel for Android 8.0+
+    /**
+     * 🔥 CRITICAL: Request battery optimization exclusion
+     * Xiaomi/MIUI devices kill accessibility services when app removed from recents
+     * This prevents that behavior
+     */
+    private fun requestBatteryOptimizationExclusion() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                val packageName = packageName
+
+                if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                    Log.w(TAG, "⚠️ Battery optimization enabled - Requesting exclusion")
+                    
+                    val intent = Intent().apply {
+                        action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                    
+                    Log.d(TAG, "✅ Battery optimization exclusion requested")
+                } else {
+                    Log.d(TAG, "✅ Battery optimization already excluded")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error requesting battery optimization exclusion", e)
+        }
+
+        // 🔥 XIAOMI/MIUI SPECIFIC: Request autostart permission
+        requestXiaomiAutostart()
+    }
+
+    /**
+     * 🔥 XIAOMI SPECIFIC: Request autostart permission
+     * MIUI kills background services aggressively
+     * This opens the autostart permission screen
+     */
+    private fun requestXiaomiAutostart() {
+        try {
+            val manufacturer = Build.MANUFACTURER.toLowerCase()
+            if (manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco")) {
+                Log.d(TAG, "📱 Xiaomi device detected - Opening autostart settings")
+                
+                val intent = Intent().apply {
+                    component = ComponentName(
+                        "com.miui.securitycenter",
+                        "com.miui.permcenter.autostart.AutoStartManagementActivity"
+                    )
+                }
+                startActivity(intent)
+                
+                Log.d(TAG, "✅ Autostart permission screen opened")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not open Xiaomi autostart settings (device might not be Xiaomi): ${e.message}")
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -72,18 +132,15 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /// Start background recording via Accessibility Service
     private fun startBackgroundRecording() {
         Log.d(TAG, "▶️ Starting Background Recording")
 
-        // Check if accessibility service is enabled
         if (!isAccessibilityServiceEnabled()) {
             Log.w(TAG, "⚠️ Accessibility Service not enabled - Opening Settings")
             openAccessibilitySettings()
             return
         }
 
-        // Start the accessibility service
         val intent = Intent(this, CallRecorderAccessibilityService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -95,7 +152,6 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "✅ Background Recording Enabled")
     }
 
-    /// Stop background recording
     private fun stopBackgroundRecording() {
         Log.d(TAG, "⏹️ Stopping Background Recording")
         val intent = Intent(this, CallRecorderAccessibilityService::class.java)
@@ -103,7 +159,6 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "✅ Service Stopped")
     }
 
-    /// Check if accessibility service is enabled
     private fun isAccessibilityServiceEnabled(): Boolean {
         val accessibilityManager = getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
         if (accessibilityManager == null) {
@@ -123,7 +178,6 @@ class MainActivity : FlutterActivity() {
         return isEnabled
     }
 
-    /// Open accessibility settings for user to enable service
     private fun openAccessibilitySettings() {
         Log.d(TAG, "🔓 Opening Accessibility Settings")
         try {
