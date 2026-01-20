@@ -1,4 +1,3 @@
-// File: android/app/src/main/kotlin/com/example/recorder/CallRecorderAccessibilityService.kt
 package com.example.recorder
 
 import android.accessibilityservice.AccessibilityService
@@ -6,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.media.MediaRecorder
 import android.os.Build
-import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -15,6 +13,22 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 
+/**
+ * 🚀 CallRecorderAccessibilityService - Background Call Recording (Cube ACR Style)
+ * 
+ * Why Accessibility Service?
+ * - Runs as SYSTEM SERVICE (not tied to app lifecycle)
+ * - Survives app crashes, kills, and device memory pressure
+ * - Can detect call events even when app is completely closed
+ * - Like Cube ACR: Truly persistent background recording
+ * 
+ * Flow:
+ * 1. Device boots → BootReceiver starts this service
+ * 2. Service monitors phone state continuously
+ * 3. Call starts → AUTO recording begins
+ * 4. Call ends → Recording saved automatically
+ * 5. Works even if app is force-closed by user
+ */
 class CallRecorderAccessibilityService : AccessibilityService() {
 
     companion object {
@@ -29,7 +43,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
     private var isRecording = false
     private var currentFilePath: String? = null
 
-    // NEW: Track call state independently
+    // Track call state independently (not dependent on app)
     private var isInCall = false
     private var telephonyManager: TelephonyManager? = null
 
@@ -37,11 +51,12 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
 
-        // Initialize telephony manager for call state monitoring
+        // Initialize telephony manager for system-level call state monitoring
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 
         Log.d(TAG, "✅ Accessibility Service Connected - Background Recording ENABLED")
         Log.d(TAG, "📱 App can be closed - Recording will continue automatically")
+        Log.d(TAG, "🔄 Device reboot - Recording will auto-start")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -53,9 +68,8 @@ class CallRecorderAccessibilityService : AccessibilityService() {
 
                     // Detect call-related packages (phone dialers, telecom)
                     if (isCallRelatedPackage(packageName)) {
-                        Log.d(TAG, "📞 Call UI Detected: $packageName")
-
-                        // Check actual call state
+                        Log.d(TAG, "📄 Call UI Detected: $packageName")
+                        // Verify with actual call state
                         checkAndHandleCallState()
                     }
                 }
@@ -72,7 +86,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
-    // NEW: Check actual phone call state using TelephonyManager
+    /// Check actual phone call state using TelephonyManager (System-level)
     private fun checkAndHandleCallState() {
         try {
             val callState = telephonyManager?.callState ?: TelephonyManager.CALL_STATE_IDLE
@@ -81,7 +95,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 TelephonyManager.CALL_STATE_OFFHOOK -> {
                     // Call is active (answered)
                     if (!isInCall && !isRecording) {
-                        Log.d(TAG, "📞 CALL STARTED (OFFHOOK)")
+                        Log.d(TAG, "📄 CALL STARTED (OFFHOOK)")
                         isInCall = true
                         startCallRecording()
                     }
@@ -90,7 +104,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 TelephonyManager.CALL_STATE_RINGING -> {
                     // Incoming call ringing (not yet answered)
                     if (!isInCall) {
-                        Log.d(TAG, "📞 CALL RINGING (waiting for answer)")
+                        Log.d(TAG, "📄 CALL RINGING (waiting for answer)")
                         isInCall = true
                         // Don't start recording yet - wait for OFFHOOK
                     }
@@ -99,7 +113,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
                 TelephonyManager.CALL_STATE_IDLE -> {
                     // No call or call ended
                     if (isInCall) {
-                        Log.d(TAG, "📞 CALL ENDED (IDLE)")
+                        Log.d(TAG, "📄 CALL ENDED (IDLE)")
                         isInCall = false
                         if (isRecording) {
                             stopCallRecording()
@@ -112,7 +126,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
-    // NEW: Detect call-related packages
+    /// Detect call-related packages for UI monitoring
     private fun isCallRelatedPackage(packageName: String): Boolean {
         val callPackages = listOf(
             "com.android.server.telecom",
@@ -127,7 +141,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         return callPackages.any { packageName.contains(it, ignoreCase = true) }
     }
 
-    // NEW: Automatic call recording start
+    /// Start automatic call recording
     private fun startCallRecording() {
         if (isRecording) {
             Log.w(TAG, "⚠️ Already recording, skipping")
@@ -135,7 +149,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
 
         try {
-            // Start foreground service
+            // Start foreground service (keeps recording alive)
             CallRecordingForegroundService.start(this)
 
             // Generate file path
@@ -150,13 +164,14 @@ class CallRecorderAccessibilityService : AccessibilityService() {
             } else {
                 Log.e(TAG, "❌ Failed to start AUTO recording")
                 currentFilePath = null
+                CallRecordingForegroundService.stop(this)
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error in startCallRecording", e)
         }
     }
 
-    // NEW: Automatic call recording stop
+    /// Stop automatic call recording
     private fun stopCallRecording() {
         if (!isRecording) {
             Log.w(TAG, "⚠️ Not recording, skipping")
@@ -169,7 +184,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
             if (savedPath != null) {
                 Log.d(TAG, "✅ AUTO Recording saved: $savedPath")
 
-                // Verify file
+                // Verify file exists and get size
                 val file = File(savedPath)
                 if (file.exists()) {
                     val sizeMB = file.length() / (1024.0 * 1024.0)
@@ -188,7 +203,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
-    // NEW: Generate recording file path
+    /// Generate unique recording file path
     private fun generateRecordingFilePath(): String {
         val recordingsDir = File(filesDir, "CallRecordings")
 
@@ -206,7 +221,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         return File(recordingsDir, fileName).absolutePath
     }
 
-    // NEW: Notify Flutter app (if running) about new recording
+    /// Notify Flutter app (if running) about new recording
     private fun notifyFlutterApp(filePath: String) {
         try {
             val intent = Intent("com.example.recorder.NEW_RECORDING")
@@ -226,10 +241,11 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         super.onDestroy()
         instance = null
         stopRecording()
+        CallRecordingForegroundService.stop(this)
         Log.d(TAG, "❌ Service Destroyed")
     }
 
-    // EXISTING: Start Recording Function (No changes)
+    /// Start Recording with optimal audio source
     fun startRecording(filePath: String): Boolean {
         if (isRecording) {
             Log.w(TAG, "Recording already in progress")
@@ -274,7 +290,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
-    // EXISTING: Stop Recording Function (No changes)
+    /// Stop Recording
     fun stopRecording(): String? {
         if (!isRecording) {
             return null
@@ -302,7 +318,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
     }
 
-    // EXISTING: Optimal Audio Source (No changes)
+    /// Optimal Audio Source based on Android version
     private fun getOptimalAudioSource(): Int {
         return when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
