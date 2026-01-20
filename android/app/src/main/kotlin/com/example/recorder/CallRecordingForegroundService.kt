@@ -60,15 +60,16 @@ class CallRecordingForegroundService : Service() {
 
             // Android 11+ supports foreground service types
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                @Suppress("DEPRECATION")
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    android.app.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                @Suppress("DEPRECATION")
-                startForeground(NOTIFICATION_ID, notification)
+                try {
+                    // Use reflection to access ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    val serviceInfoClass = Class.forName("android.app.ServiceInfo")
+                    val foregroundServiceType = serviceInfoClass.getField("FOREGROUND_SERVICE_TYPE_MICROPHONE").getInt(null)
+                    startForeground(NOTIFICATION_ID, notification, foregroundServiceType)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not use ServiceInfo type, falling back: ${e.message}")
+                    @Suppress("DEPRECATION")
+                    startForeground(NOTIFICATION_ID, notification)
+                }
             } else {
                 @Suppress("DEPRECATION")
                 startForeground(NOTIFICATION_ID, notification)
@@ -108,8 +109,17 @@ class CallRecordingForegroundService : Service() {
         try {
             // Android 13+ requires specific stop flags
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                @Suppress("DEPRECATION")
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE_NOTIFICATION)
+                try {
+                    // Use reflection to access STOP_FOREGROUND_REMOVE_NOTIFICATION
+                    val serviceCompatClass = ServiceCompat::class.java
+                    val stopForegroundFlagField = serviceCompatClass.getField("STOP_FOREGROUND_REMOVE_NOTIFICATION")
+                    val flag = stopForegroundFlagField.getInt(null)
+                    ServiceCompat.stopForeground(this, flag)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not use STOP_FOREGROUND_REMOVE_NOTIFICATION, falling back: ${e.message}")
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
             } else {
                 @Suppress("DEPRECATION")
                 stopForeground(true)
