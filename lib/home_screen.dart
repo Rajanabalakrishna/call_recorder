@@ -17,6 +17,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isAccessibilityEnabled = false;
   List<Map<String, dynamic>> _recordings = [];
   bool _isLoading = true;
+  bool _setupComplete = false;
 
   @override
   void initState() {
@@ -28,11 +29,17 @@ class _HomeScreenState extends State<HomeScreen> {
     await _requestPermissions();
     await _checkAccessibility();
     await _loadRecordings();
+    _checkSetupComplete();
     if (mounted) {
       setState(() {
         _isLoading = false;
       });
     }
+  }
+
+  void _checkSetupComplete() {
+    // Check if accessibility is enabled
+    _setupComplete = _isAccessibilityEnabled;
   }
 
   Future<void> _requestPermissions() async {
@@ -66,11 +73,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final directory = Directory('/data/data/com.example.recorder/files/CallRecordings');
 
       if (await directory.exists()) {
-        // ✅ ASYNC: list() instead of listSync()
         final entities = await directory.list().toList();
         final files = entities.where((file) => file.path.endsWith('.m4a')).toList();
         
-        // ✅ ASYNC: Load file stats in parallel
         final recordings = <Map<String, dynamic>>[];
         for (final file in files) {
           try {
@@ -86,7 +91,6 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
 
-        // Sort by date
         recordings.sort((a, b) => 
             (b['modified'] as DateTime).compareTo(a['modified'] as DateTime));
 
@@ -98,7 +102,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       debugPrint('Error loading recordings: $e');
-      // Try alternative path
       try {
         final appDir = await getApplicationDocumentsDirectory();
         final altDirectory = Directory('${appDir.path}/CallRecordings');
@@ -142,14 +145,51 @@ class _HomeScreenState extends State<HomeScreen> {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('✅ Enable Service'),
-          content: const Text(
-            'Steps:\n'
-            '1. Find "Company Call Recorder"\n'
-            '2. Turn ON the service\n'
-            '3. Allow restricted settings if asked\n'
-            '4. Return to app\n\n'
-            '📱 Calls will record automatically!',
+          title: const Text('✅ Setup Instructions'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'STEP 1: Enable Accessibility',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '1. Find "Company Call Recorder"\n'
+                  '2. Turn ON the service\n'
+                  '3. Allow restricted settings if asked\n',
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'STEP 2: Disable Battery Optimization',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '1. Go to Settings > Apps > Call Recorder\n'
+                  '2. Battery > Unrestricted\n'
+                  '3. This keeps recording active when app is closed\n',
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'STEP 3: Enable Autostart (Xiaomi/MIUI)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '1. Security > Autostart\n'
+                  '2. Find "Call Recorder"\n'
+                  '3. Turn ON\n',
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  '📱 After setup, calls will record automatically even when app is closed!',
+                  style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -201,6 +241,36 @@ class _HomeScreenState extends State<HomeScreen> {
               setState(() => _isLoading = false);
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('ℹ️ Important Info'),
+                  content: const SingleChildScrollView(
+                    child: Text(
+                      '📱 HOW IT WORKS:\n\n'
+                      '1. Enable accessibility service\n'
+                      '2. Disable battery optimization\n'
+                      '3. Enable autostart (Xiaomi)\n'
+                      '4. Close the app\n'
+                      '5. Make a call - it will record!\n\n'
+                      '⚡ BATTERY OPTIMIZATION MUST BE DISABLED\n\n'
+                      'Without this, Android will kill the recorder when you close the app.\n\n'
+                      '📞 The app works in background like Cube ACR!',
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ],
       ),
       body: Column(
@@ -241,8 +311,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 4),
                         Text(
                           _isAccessibilityEnabled
-                              ? 'Calls will be recorded automatically'
-                              : 'Enable service to start recording',
+                              ? 'Works even when app is closed!'
+                              : 'Complete setup to start recording',
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey[700],
@@ -254,12 +324,39 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (!_isAccessibilityEnabled)
                     ElevatedButton(
                       onPressed: _openAccessibilitySettings,
-                      child: const Text('Enable'),
+                      child: const Text('Setup'),
                     ),
                 ],
               ),
             ),
           ),
+
+          // Setup Warning (if not complete)
+          if (!_isAccessibilityEnabled)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                border: Border.all(color: Colors.orange),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning, color: Colors.orange),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Complete setup to record calls in background!',
+                      style: TextStyle(
+                        color: Colors.orange[900],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // Recordings Header
           Padding(
@@ -303,7 +400,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         Text(
                           _isAccessibilityEnabled
                               ? 'Make a call to test recording'
-                              : 'Enable service to start',
+                              : 'Complete setup first',
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey[500],
