@@ -148,8 +148,7 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-        info.flags = AccessibilityServiceInfo.FLAG_REPORT_NOTIFICATION_STATE or
-                AccessibilityServiceInfo.DEFAULT
+        info.flags = AccessibilityServiceInfo.DEFAULT
         serviceInfo = info
 
         Log.d("CallRecorder", "Accessibility Service configured")
