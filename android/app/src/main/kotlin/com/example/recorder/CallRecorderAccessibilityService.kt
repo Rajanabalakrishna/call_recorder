@@ -85,22 +85,26 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         Log.d(TAG, "📱 Call State Changed: $state (0=IDLE, 1=RINGING, 2=OFFHOOK)")
         
         backgroundHandler?.post {
-            when (state) {
-                TelephonyManager.CALL_STATE_OFFHOOK -> {
-                    if (isInCall.compareAndSet(false, true)) {
-                        Log.d(TAG, "📞 CALL STARTED - Starting Recording")
-                        startRecording()
+            try {
+                when (state) {
+                    TelephonyManager.CALL_STATE_OFFHOOK -> {
+                        if (isInCall.compareAndSet(false, true)) {
+                            Log.d(TAG, "📞 CALL STARTED - Starting Recording")
+                            startRecording()
+                        }
+                    }
+                    TelephonyManager.CALL_STATE_IDLE -> {
+                        if (isInCall.compareAndSet(true, false)) {
+                            Log.d(TAG, "☎️ CALL ENDED - Stopping Recording")
+                            stopRecording()
+                        }
+                    }
+                    TelephonyManager.CALL_STATE_RINGING -> {
+                        isInCall.set(true)
                     }
                 }
-                TelephonyManager.CALL_STATE_IDLE -> {
-                    if (isInCall.compareAndSet(true, false)) {
-                        Log.d(TAG, "☎️ CALL ENDED - Stopping Recording")
-                        stopRecording()
-                    }
-                }
-                TelephonyManager.CALL_STATE_RINGING -> {
-                    isInCall.set(true)
-                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error handling call state: ${e.message}", e)
             }
         }
     }
@@ -112,9 +116,14 @@ class CallRecorderAccessibilityService : AccessibilityService() {
         }
 
         try {
-            // Create recordings directory
-            val recordingsDir = File(filesDir, "CallRecordings")
-            if (!recordingsDir.exists()) recordingsDir.mkdirs()
+            // ✅ CRITICAL: Use getExternalCacheDir() - accessible when app closed!
+            val recordingsDir = File(getExternalCacheDir(), "CallRecordings")
+            
+            // Safe directory creation (no race condition)
+            if (!recordingsDir.mkdirs() && !recordingsDir.isDirectory) {
+                Log.e(TAG, "❌ Failed to create recordings directory")
+                return
+            }
 
             // Generate file path
             val timestamp = System.currentTimeMillis()
@@ -137,22 +146,29 @@ class CallRecorderAccessibilityService : AccessibilityService() {
             }
 
             mediaRecorder?.apply {
-                // 🔑 CRITICAL: VOICE_CALL captures BOTH sides of call audio (like Cube ACR)
-                setAudioSource(MediaRecorder.AudioSource.VOICE_CALL)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(44100)
-                setAudioEncodingBitRate(128000)
-                setOutputFile(currentFilePath)
-
                 try {
+                    // 🔑 CRITICAL: VOICE_CALL captures BOTH sides of call audio (like Cube ACR)
+                    setAudioSource(MediaRecorder.AudioSource.VOICE_CALL)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioSamplingRate(44100)
+                    setAudioEncodingBitRate(128000)
+                    setOutputFile(currentFilePath)
+
                     prepare()
                     start()
                     isRecording.set(true)
                     Log.d(TAG, "🔴 RECORDING STARTED: $fileName")
-                    Log.d(TAG, "💯 Audio Source: VOICE_CALL (Both sides)")
+                    Log.d(TAG, "📊 Audio Source: VOICE_CALL (Both sides)")
                 } catch (e: IOException) {
                     Log.e(TAG, "❌ Failed to start recording: ${e.message}", e)
+                    release()
+                    mediaRecorder = null
+                    isRecording.set(false)
+                    currentFilePath = null
+                    CallRecordingForegroundService.stop(this@CallRecorderAccessibilityService)
+                } catch (e: RuntimeException) {
+                    Log.e(TAG, "❌ Runtime error starting recorder: ${e.message}", e)
                     release()
                     mediaRecorder = null
                     isRecording.set(false)
@@ -178,8 +194,16 @@ class CallRecorderAccessibilityService : AccessibilityService() {
 
         try {
             mediaRecorder?.apply {
-                stop()
-                release()
+                try {
+                    stop()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error stopping recorder: ${e.message}")
+                }
+                try {
+                    release()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error releasing recorder: ${e.message}")
+                }
             }
             mediaRecorder = null
             isRecording.set(false)
@@ -189,8 +213,12 @@ class CallRecorderAccessibilityService : AccessibilityService() {
 
             if (filePath != null) {
                 val file = File(filePath)
-                val sizeMB = file.length() / (1024.0 * 1024.0)
-                Log.d(TAG, "✅ RECORDING SAVED: ${file.name} (${String.format("%.2f", sizeMB)} MB)")
+                if (file.exists()) {
+                    val sizeMB = file.length() / (1024.0 * 1024.0)
+                    Log.d(TAG, "✅ RECORDING SAVED: ${file.name} (${String.format("%.2f", sizeMB)} MB)")
+                } else {
+                    Log.w(TAG, "⚠️ Recording file not found: $filePath")
+                }
             }
 
             CallRecordingForegroundService.stop(this)
