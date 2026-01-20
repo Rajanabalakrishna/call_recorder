@@ -3,6 +3,7 @@ package com.example.recorder
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -56,15 +57,22 @@ class CallRecordingForegroundService : Service() {
 
         // Start foreground with notification
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                // Android 13+: Specify foreground service type
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+: Use ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    android.app.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10-13: Use legacy constant
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    0x00000040 // FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION constant value
                 )
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                // Android 8-12
+                // Android 8-9
                 startForeground(NOTIFICATION_ID, notification)
             } else {
                 // Android 7 and below
@@ -72,7 +80,7 @@ class CallRecordingForegroundService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
             
-            Log.d(TAG, "💪f Notification Posted - Recording Protected from Killing")
+            Log.d(TAG, "💯 Notification Posted - Recording Protected from Killing")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error starting foreground: ${e.message}", e)
         }
@@ -88,7 +96,7 @@ class CallRecordingForegroundService : Service() {
         try {
             // Remove foreground notification
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE_NOTIFICATION)
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             } else {
                 @Suppress("DEPRECATION")
                 stopForeground(true)
