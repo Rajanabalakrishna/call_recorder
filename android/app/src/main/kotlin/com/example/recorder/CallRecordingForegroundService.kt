@@ -3,7 +3,6 @@ package com.example.recorder
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.app.ServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -59,12 +58,17 @@ class CallRecordingForegroundService : Service() {
                 .setAutoCancel(false)
                 .build()
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 11+ supports foreground service types
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                @Suppress("DEPRECATION")
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    android.app.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
+                startForeground(NOTIFICATION_ID, notification)
             } else {
                 @Suppress("DEPRECATION")
                 startForeground(NOTIFICATION_ID, notification)
@@ -101,7 +105,18 @@ class CallRecordingForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE_NOTIFICATION)
+        try {
+            // Android 13+ requires specific stop flags
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                @Suppress("DEPRECATION")
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE_NOTIFICATION)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping foreground: ${e.message}")
+        }
         Log.d(TAG, "Service Destroyed")
     }
 }
