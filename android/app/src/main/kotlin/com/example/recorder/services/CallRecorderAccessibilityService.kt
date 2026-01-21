@@ -26,31 +26,37 @@ class CallRecorderAccessibilityService : AccessibilityService() {
 
         Log.d(TAG, "Event Type: ${event.eventType}")
 
+        // TYPE_CALL_STATE_CHANGED doesn't exist in AccessibilityEvent
+        // Instead, handle window state changes for call detection
         when (event.eventType) {
-            AccessibilityEvent.TYPE_CALL_STATE_CHANGED -> {
-                handleCallStateChanged()
-            }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 handleWindowStateChanged(event)
             }
-        }
-    }
-
-    private fun handleCallStateChanged() {
-        try {
-            val telecomManager = ContextCompat.getSystemService(this, TelecomManager::class.java)
-            if (telecomManager != null && telecomManager.isInCall) {
-                Log.d(TAG, "Call detected - starting recording")
-                startRecording("System Call")
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                handleWindowContentChanged(event)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error handling call state: ${e.message}")
         }
     }
 
     private fun handleWindowStateChanged(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: return
         Log.d(TAG, "Window changed: $packageName")
+        checkForCallAndRecord(packageName)
+    }
+
+    private fun handleWindowContentChanged(event: AccessibilityEvent) {
+        val packageName = event.packageName?.toString() ?: return
+        Log.d(TAG, "Window content changed: $packageName")
+        checkForCallAndRecord(packageName)
+    }
+
+    private fun checkForCallAndRecord(packageName: String) {
+        // Detect phone app
+        if (packageName == "com.android.phone" || packageName == "com.android.dialer") {
+            Log.d(TAG, "Phone app detected: $packageName")
+            startRecording("Phone Call")
+            return
+        }
 
         // Detect VoIP apps
         val voipApps = listOf(
@@ -59,7 +65,8 @@ class CallRecorderAccessibilityService : AccessibilityService() {
             "com.viber.voip",
             "com.skype.raider",
             "com.google.android.apps.hangouts",
-            "com.google.duo"
+            "com.google.duo",
+            "com.facebook.orca"
         )
 
         if (voipApps.contains(packageName)) {

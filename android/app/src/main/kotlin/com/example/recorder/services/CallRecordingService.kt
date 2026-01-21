@@ -147,7 +147,7 @@ class CallRecordingService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Recording Call")
             .setContentText("$phoneNumber - $status")
-            .setSmallIcon(android.R.drawable.ic_media_record)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)  // Valid system drawable
             .setOngoing(true)
             .setAutoCancel(false)
             .setPriority(NotificationCompat.PRIORITY_LOW)
